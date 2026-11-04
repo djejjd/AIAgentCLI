@@ -1,12 +1,32 @@
 # cmux-sidebar
 
+A custom left sidebar for [cmux](https://cmux.com) that turns its flat workspace groups into a
+nested tree and shows which coding agents are working and which are done.
+
+![cmux-sidebar: nested groups, orange and green agent dots, a collapsed group that still lists its active workspaces](docs/demo.gif)
+
+- **Nested groups.** Name a group `Work/Backend/API` and it shows as a tree you can fold.
+- **Agent dots.** Orange while an agent works; green when it finished while you were in another
+  workspace, until you open it.
+- **Folding keeps active work visible.** A collapsed group still lists its working and finished
+  workspaces.
+- **Active and Favorites filters**, title colors, multi-select with bulk close, drag and drop.
+
+Paste this into a **cmux terminal** to install:
+
+```sh
+curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh
+```
+
+Tested with Claude Code and omp; other agents that cmux hooks into should work too
+([details](#supported-agents)). Needs cmux 0.64.25 or newer.
+
 > **Beta.** Used daily, but expect rough edges. Please
 > [open an issue](https://github.com/s4ff0x/cmux-sidebar/issues) with your cmux version
 > (`cmux --version`) when something looks wrong.
 
-A custom left sidebar for [cmux](https://cmux.com): nested workspace groups, live agent activity
-dots, and Active / Favorites filters. It runs on the cmux JS custom-sidebar runtime (one file in
-`~/.config/cmux/sidebars/`) and is a fork of the upstream
+It runs on the cmux JS custom-sidebar runtime (one file in `~/.config/cmux/sidebars/`) and is a
+fork of the upstream
 [`Examples/CustomSidebars/workspaces.js`](https://github.com/manaflow-ai/cmux/blob/main/Examples/CustomSidebars/workspaces.js).
 It keeps that example's behavior: select on click, inline rename (double-click), close, unread
 badge, multi-select (⌘-click / ⇧-click), Close Others, and drag-and-drop.
@@ -105,7 +125,7 @@ and switches the left sidebar to it. Run it from a cmux terminal: by default cmu
 commands only from processes it started. From any other terminal the file is still installed;
 then right-click the sidebar button in cmux and pick **cmux-sidebar**.
 
-Requirements: cmux 0.64.25 or newer (the version it is tested on), with Custom Sidebars enabled
+Requirements: cmux 0.64.25 or newer (tested on 0.64.25 and 0.65.1), with Custom Sidebars enabled
 (the default; **Settings → Custom Sidebars**).
 
 - **Update:** run the same command again.
