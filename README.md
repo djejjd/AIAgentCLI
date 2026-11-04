@@ -31,6 +31,9 @@ fork of the upstream
 It keeps that example's behavior: select on click, inline rename (double-click), close, unread
 badge, multi-select (⌘-click / ⇧-click), Close Others, and drag-and-drop.
 
+Why I built it and how the performance work went:
+[mendelson.dev/work/cmux-sidebar](https://mendelson.dev/work/cmux-sidebar/).
+
 ## Features
 
 - **Nested groups.** Workspace groups nest by name (see below), each level indented and
