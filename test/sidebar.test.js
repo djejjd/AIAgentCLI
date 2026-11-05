@@ -120,7 +120,7 @@ describe("working records that went quiet", () => {
     assert.deepEqual(["claude", "unbound", "other pane"].map((t) => sb.row(t).indicator()), ["working", "working", "working"]);
   });
 
-  test("a claude record with no hook activity for 10 minutes is stale: no dot, and no green either", () => {
+  test("a claude record with no hook activity for 10 minutes is stale: no dot, and not green until it settles", () => {
     const at = (now, lastActivityAt) => one(now, [agent("working", { lastActivityAt })]);
     const sb = mountSidebar(at(0, 0));
     sb.setData(at(599, 0));

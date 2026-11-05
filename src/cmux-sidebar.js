@@ -164,7 +164,8 @@ const RECENT_SECONDS = 60 * 60;
 // went quiet, and the sidebar works around both (see README, Supported agents):
 // - Claude Code sends no Stop when you interrupt a turn, so the record says
 //   working until the next prompt. A claude record with no hook activity for
-//   CLAUDE_STALE_SECONDS is stale: not working, and no finish either.
+//   CLAUDE_STALE_SECONDS is stale: no dot, no finish yet; a settle after that
+//   still counts as its finish.
 // - omp sends no Stop while a turn "will continue" (a background job or
 //   subagent still pending), and sometimes never. omp's own terminal title
 //   says whose turn it is (tui.titleState): "<icon> > …" is your turn,
