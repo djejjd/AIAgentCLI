@@ -41,7 +41,15 @@ Why I built it and how the performance work went:
 - **Activity dots.** Orange marks a workspace whose coding agent is really working, mid-turn or
   with a running subagent. Waiting for input, idle, and ended are not working. Green marks a
   workspace whose turn **finished while you were elsewhere**; it stays green until you open that
-  workspace. A group header shows its own anchor workspace's dot; headers show no counts.
+  workspace. A group header shows its own anchor workspace's dot; headers show no counts. cmux
+  can keep a session at "working" after it went quiet (an interrupted Claude Code turn, an omp
+  turn with a background job pending, a session restarted in the same terminal); the sidebar
+  works around that, see [Supported agents](#supported-agents).
+- **Row titles follow the agent's pane.** cmux names a workspace after its focused pane, so a
+  split with a shell, a dev server or a file viewer in front hides the title the agent
+  generates. The row shows the agent pane's title instead while the focused pane hosts no agent.
+  A workspace you renamed keeps its name. In the rename editor, Return on the unchanged name
+  changes nothing (a rename would pin the generated title as a custom one).
 - **Recently finished clock (optional, off by default).** Turn it on in **Settings** (below).
   A green clock icon before the title marks a workspace whose agent finished a turn less than an
   hour ago, whether you were there or elsewhere. It hides an hour after the latest finish, and
@@ -128,7 +136,7 @@ and switches the left sidebar to it. Run it from a cmux terminal: by default cmu
 commands only from processes it started. From any other terminal the file is still installed;
 then right-click the sidebar button in cmux and pick **cmux-sidebar**.
 
-Requirements: cmux 0.64.25 or newer (tested on 0.64.25 and 0.65.1), with Custom Sidebars enabled
+Requirements: cmux 0.64.25 or newer (tested on 0.64.25, 0.65.1 and 0.65.2), with Custom Sidebars enabled
 (the default; **Settings → Custom Sidebars**).
 
 - **Update:** run the same command again.
@@ -151,13 +159,28 @@ exposes no process information to sidebars, so an agent without hooks never show
 
 **Tested:**
 
-- **Claude Code:** works out of the box; the cmux Claude wrapper injects its hooks.
+- **Claude Code:** works out of the box; the cmux Claude wrapper injects its hooks. Claude Code
+  sends no Stop hook when you interrupt a turn (Escape), so cmux keeps the session at "working"
+  until the next prompt. The sidebar treats a Claude record with no hook activity for 10 minutes
+  as stale: no dot. A working Claude session reports every tool call, so a real turn rarely goes
+  quiet that long; one that does loses its dot until its next tool call, and its finish still
+  turns green.
 - **omp:** install the hooks once with `cmux hooks omp install`, then restart running omp
-  sessions (omp loads the hook extension when a session starts).
+  sessions (omp loads the hook extension when a session starts). omp sends no Stop hook while a
+  turn "will continue" (a background job or subagent still pending), so cmux can keep the
+  session at "working" for hours. omp's own terminal title says whose turn it is
+  (`tui.titleState`, on by default): `π > topic: title` is your turn, `π ! …` is waiting on
+  you. The sidebar reads that title and shows no orange dot for either; a turn that ends this
+  way still turns green. With the setting off, the dot follows cmux's record.
+
+For every agent, a terminal tab keeps the records of every session it ever hosted, and a
+superseded one (omp `/new`, an agent restarted in the same terminal) can sit at "working" for
+good. Only the newest record per terminal tab counts. The stale check runs once a minute, so a
+Claude record goes stale between 10 and 11 minutes after its last hook activity.
 
 **Untested, expected to work:** the sidebar reads cmux's generic session status (working, needs
-input, idle, ended) and never checks which agent it is. So any agent that cmux hooks into should
-show the same dots once its hooks are installed with `cmux hooks setup` (or
+input, idle, ended); only the two workarounds above look at the agent kind. So any agent that
+cmux hooks into should show the same dots once its hooks are installed with `cmux hooks setup` (or
 `cmux hooks setup <agent>`). As of cmux 0.64.25 that list is Codex, OpenCode, Pi, Gemini, Cursor
 CLI, Copilot, Amp, Grok, Kimi Code, Kiro CLI, Rovo Dev, CodeBuddy, Factory, Qoder, Campfire,
 and Antigravity; see cmux's

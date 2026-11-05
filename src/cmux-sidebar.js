@@ -159,8 +159,55 @@ const titleColor = (w) => (isImportant(w) ? IMPORTANT_RED : colorOf(w) || null);
 // important never do.
 const RECENT_SECONDS = 60 * 60;
 
-const isWorking = (w) =>
-  !!w && (w.agents || []).some((a) => a.status === "working" || (a.children || []).some((c) => c.running));
+// cmux's agents[].status is "last hook event wins": a prompt makes a record
+// working, Stop makes it idle. Two agents leave records at working after they
+// went quiet, and the sidebar works around both (see README, Supported agents):
+// - Claude Code sends no Stop when you interrupt a turn, so the record says
+//   working until the next prompt. A claude record with no hook activity for
+//   CLAUDE_STALE_SECONDS is stale: not working, and no finish either.
+// - omp sends no Stop while a turn "will continue" (a background job or
+//   subagent still pending), and sometimes never. omp's own terminal title
+//   says whose turn it is (tui.titleState): "<icon> > …" is your turn,
+//   "<icon> ! …" is waiting on you. Either overrides a working record.
+// A terminal tab also keeps every record it ever hosted, so a superseded
+// session (omp /new, an agent restarted in the same tab) can sit at working
+// for good: only the newest record per hosting tab counts.
+const CLAUDE_STALE_SECONDS = 10 * 60;
+const OMP_WAITING_TITLE = /^(?:\S+ )?[>!] /;
+
+// The newest record per hosting tab, in cmux's order (most recent first).
+function liveAgents(w) {
+  const byTab = new Map();
+  for (const a of w.agents || []) {
+    const key = a.surfaceId || a.panelId || a.id;
+    const prev = byTab.get(key);
+    if (!prev || (a.lastActivityAt ?? 0) > (prev.lastActivityAt ?? 0)) byTab.set(key, a);
+  }
+  return [...byTab.values()];
+}
+
+// The tab hosting an agent record, or null when cmux reports no binding.
+function agentTab(w, a) {
+  for (const t of w.tabs || []) {
+    if ((a.surfaceId && t.surfaceId === a.surfaceId) || (a.panelId && t.id === a.panelId)) return t;
+  }
+  return null;
+}
+
+const claimsWork = (a) => a.status === "working" || (a.children || []).some((c) => c.running);
+
+function titleSaysWaiting(w, a) {
+  if (a.kind !== "omp") return false;
+  const tab = agentTab(w, a);
+  return !!tab && OMP_WAITING_TITLE.test(tab.title ?? "");
+}
+
+// The records that claim work, after the rules above except time.
+const busyAgents = (w) => liveAgents(w).filter((a) => claimsWork(a) && !titleSaysWaiting(w, a));
+const isWorking = (w) => !!w && busyAgents(w).length > 0;
+// Working by the data, but every busy record is a quiet claude one.
+const allStale = (busy, now) =>
+  busy.every((a) => a.kind === "claude" && now - (a.lastActivityAt ?? 0) >= CLAUDE_STALE_SECONDS);
 
 // A 14pt dot slot. `state` is a change-only signal; the dot hides while it
 // is null. One node: every rendered node costs the host work on every scroll
@@ -228,6 +275,7 @@ function selectWorkspace(id) {
 // reload, a source edit, a sidebar switch): the green dot starts empty then,
 // and the clock falls back to what the data can tell (see answeredAt).
 const finished = new Set(); // finished, not opened since: the green dot
+const stale = new Set(); // working by the data, but gone quiet (see isStale): no dot
 const finishedAt = new Map(); // id -> wall time of its last observed finish
 const recent = new Set(); // finished under RECENT_SECONDS ago: the clock
 let wasWorking = new Set();
@@ -259,6 +307,7 @@ function answeredAt(w, now) {
 const minute = memo(() => Math.floor((data.clock()?.epoch ?? 0) / 60));
 const [finishedVersion, setFinishedVersion] = signal("");
 const [recentVersion, setRecentVersion] = signal("");
+const [staleVersion, setStaleVersion] = signal("");
 computed(() => {
   const ws = wsList();
   minute();
@@ -269,7 +318,12 @@ computed(() => {
   recent.clear();
   for (const w of ws) {
     present.add(w.id);
-    if (isWorking(w)) {
+    const busy = busyAgents(w);
+    const staleNow = busy.length > 0 && allStale(busy, now);
+    if (staleNow) stale.add(w.id);
+    else stale.delete(w.id);
+    if (busy.length > 0) {
+      // Stale too: a long silent turn that ends later is still a finish.
       working.add(w.id);
       finished.delete(w.id);
     } else if (wasWorking.has(w.id)) {
@@ -291,11 +345,13 @@ computed(() => {
   }
   openId = nowOpen;
   for (const id of finished) if (!present.has(id)) finished.delete(id);
+  for (const id of stale) if (!present.has(id)) stale.delete(id);
   // Only time drops a stamp: a workspace missing from one data push keeps it.
   for (const [id, at] of finishedAt) if (now - at >= RECENT_SECONDS) finishedAt.delete(id);
   wasWorking = working;
   setFinishedVersion(Array.from(finished).sort().join(","));
   setRecentVersion(Array.from(recent).sort().join(","));
+  setStaleVersion(Array.from(stale).sort().join(","));
 });
 
 // Restarts a shown clock's hour.
@@ -306,7 +362,7 @@ function restartClock(id) {
 // "working" | "finished" | null
 function activity(w) {
   if (!w) return null;
-  if (isWorking(w)) return "working";
+  if (isWorking(w)) return staleVersion() && stale.has(w.id) ? null : "working";
   return finishedVersion() && finished.has(w.id) ? "finished" : null;
 }
 const isActive = (w) => activity(w) !== null;
@@ -512,6 +568,29 @@ const TITLE_COLORS = [
 const titleOverride = new Map();
 const [titleTick, setTitleTick] = signal(0);
 
+// cmux names a workspace after its focused pane unless it was renamed, so a
+// split with a shell, a dev server or a file viewer in front hides the name
+// the agent generates. The row follows the agent's pane instead: the title
+// of the tab hosting the newest live agent, while the focused pane hosts
+// none. A renamed workspace (its title differs from the focused tab's) keeps
+// its name.
+function agentTitle(w) {
+  const tabs = w.tabs || [];
+  if (tabs.length < 2) return null;
+  const focused = tabs.find((t) => t.focused);
+  if (!focused || focused.title !== w.title) return null;
+  let newest = null;
+  let newestTab = null;
+  for (const a of liveAgents(w)) {
+    if (a.status === "ended") continue;
+    const tab = agentTab(w, a);
+    if (tab === focused) return null;
+    if (!tab || !tab.title) continue;
+    if (!newest || (a.lastActivityAt ?? 0) > (newest.lastActivityAt ?? 0)) [newest, newestTab] = [a, tab];
+  }
+  return newestTab ? newestTab.title : null;
+}
+
 function displayTitle(w) {
   titleTick();
   if (!w) return "";
@@ -520,7 +599,7 @@ function displayTitle(w) {
     if (w.title === t) titleOverride.delete(w.id); // caught up
     else return t;
   }
-  return w.title;
+  return agentTitle(w) ?? w.title;
 }
 
 // --- inline rename -----------------------------------------------------------
@@ -1451,16 +1530,28 @@ function workspaceRow(w, e) {
 
 // In-place editor row (same box as a workspace row).
 function workspaceEditRow(w, e) {
+  // The host reads the field's text once, at mount, so the prefill is taken
+  // once too (an omp title changes its spinner frame every tick) and Return
+  // is compared against it.
+  let prefill;
   return HStack({ spacing: 8 }, [
-    TextField(memo(() => w()?.title ?? ""), {
+    TextField(memo(() => (prefill ??= displayTitle(w()))), {
       placeholder: "Workspace name",
       onSubmit: (t) => {
         const title = (t ?? "").trim();
+        // Return on the prefilled name is a cancel: a rename would pin the
+        // shown (often agent-generated) title as a custom one for good.
+        if (title === (prefill ?? "").trim()) {
+          setEditingId(null);
+          return;
+        }
         if (title) {
           titleOverride.set(w().id, title);
           setTitleTick(titleTick() + 1);
           cmux("workspace.action", { action: "rename", workspace_id: w().id, title });
         } else {
+          titleOverride.delete(w().id); // a rename still in flight must not outlive the clear
+          setTitleTick(titleTick() + 1);
           cmux("workspace.action", { action: "clear_name", workspace_id: w().id });
         }
         setEditingId(null);

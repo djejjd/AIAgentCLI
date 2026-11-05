@@ -74,6 +74,180 @@ describe("activity indicator", () => {
   });
 });
 
+// cmux's agents[].status is "last hook event wins", so a record can say
+// working long after its agent went quiet. The rules the sidebar works around
+// that with are in the source's "agent activity" section and README, Supported agents.
+describe("working records that went quiet", () => {
+  const one = (now, agents, extra = {}) => ({ now, workspaces: workspaces({ id: "w1", title: "job", agents, ...extra }) });
+  const tab = (id, title, focused = true) => ({ id, surfaceId: "s-" + id, title, focused, pinned: false });
+  const omp = (status, extra = {}) => agent(status, { kind: "omp", name: "OMP", ...extra });
+
+  test("only the newest record per tab counts: a superseded session stuck at working shows no dot", () => {
+    const onTab = (status, lastActivityAt) => agent(status, { lastActivityAt, surfaceId: "s-t1" });
+    const sb = mountSidebar({
+      now: 100,
+      workspaces: workspaces(
+        { id: "w1", title: "restarted", agents: [onTab("idle", 90), onTab("working", 50)] },
+        { id: "w2", title: "busy", agents: [onTab("working", 90), onTab("idle", 50)] },
+        // A second pane keeps its own record.
+        { id: "w3", title: "two panes", agents: [onTab("idle", 90), agent("working", { lastActivityAt: 50, surfaceId: "s-t2" })] },
+      ),
+    });
+    assert.deepEqual(["restarted", "busy", "two panes"].map((t) => sb.row(t).indicator()), [null, "working", "working"]);
+  });
+
+  test("omp's title says whose turn it is: '>' or '!' after the icon overrides a working record", () => {
+    const w = (title) => one(0, [omp("working", { surfaceId: "s-t1" })], { tabs: [tab("t1", title)] });
+    const sb = mountSidebar(w("π topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "working");
+    sb.setData(w("π > topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "finished"); // the turn ended while you were elsewhere
+    sb.setData(w("π topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "working");
+    sb.setData(w("π ! topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "finished");
+  });
+
+  test("the title rule is omp's: a claude record keeps working under the same title, and an unbound omp record too", () => {
+    const sb = mountSidebar({
+      now: 0,
+      workspaces: workspaces(
+        { id: "w1", title: "claude", agents: [agent("working", { surfaceId: "s-t1" })], tabs: [tab("t1", "π > x: y")] },
+        { id: "w2", title: "unbound", agents: [omp("working")], tabs: [tab("t1", "π > x: y")] },
+        { id: "w3", title: "other pane", agents: [omp("working", { surfaceId: "s-t2" })], tabs: [tab("t1", "π > x: y"), tab("t2", "π x: y", false)] },
+      ),
+    });
+    assert.deepEqual(["claude", "unbound", "other pane"].map((t) => sb.row(t).indicator()), ["working", "working", "working"]);
+  });
+
+  test("a claude record with no hook activity for 10 minutes is stale: no dot, and no green either", () => {
+    const at = (now, lastActivityAt) => one(now, [agent("working", { lastActivityAt })]);
+    const sb = mountSidebar(at(0, 0));
+    sb.setData(at(599, 0));
+    assert.equal(sb.row("job").indicator(), "working");
+    sb.setData(at(600, 0));
+    assert.equal(sb.row("job").indicator(), null);
+    assert.equal(sb.chip("Active").text, "Active · 0");
+    // The next prompt makes it work again; its real finish turns green.
+    sb.setData(at(700, 700));
+    assert.equal(sb.row("job").indicator(), "working");
+    sb.setData(one(800, [agent("idle", { lastActivityAt: 800 })]));
+    assert.equal(sb.row("job").indicator(), "finished");
+  });
+
+  test("a stale record that settles later still finishes: a long silent turn that ends turns green", () => {
+    const sb = mountSidebar(one(0, [agent("working")]));
+    sb.setData(one(600, [agent("working")]));
+    assert.equal(sb.row("job").indicator(), null);
+    sb.setData(one(601, [agent("idle", { lastActivityAt: 601 })]));
+    assert.equal(sb.row("job").indicator(), "finished");
+  });
+
+  test("staleness is checked by the clock, not only when data changes", () => {
+    const at = (now) => one(now, [agent("working", { id: "s1", lastActivityAt: 0 })]);
+    const sb = mountSidebar(at(0));
+    sb.setData({ ...at(660), clock: 660 });
+    assert.equal(sb.row("job").indicator(), null);
+  });
+
+  test("a record binds to its tab by panelId when the surface ids differ, as cmux reports them", () => {
+    const w = (title) => one(0, [omp("working", { panelId: "t1", surfaceId: "bonsplit-uuid" })], { tabs: [tab("t1", title)] });
+    const sb = mountSidebar(w("π topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "working");
+    sb.setData(w("π > topic: Fix the build"));
+    assert.equal(sb.row("job").indicator(), "finished");
+  });
+
+  test("omp and other agents never go stale by time alone, and one fresh record keeps the dot", () => {
+    const sb = mountSidebar({
+      now: 5000,
+      workspaces: workspaces(
+        { id: "w1", title: "omp", agents: [omp("working", { lastActivityAt: 0 })] },
+        { id: "w2", title: "codex", agents: [agent("working", { kind: "codex", lastActivityAt: 0 })] },
+        { id: "w3", title: "mixed", agents: [agent("working", { lastActivityAt: 0, surfaceId: "s-a" }), agent("working", { lastActivityAt: 4990, surfaceId: "s-b" })] },
+      ),
+    });
+    assert.deepEqual(["omp", "codex", "mixed"].map((t) => sb.row(t).indicator()), ["working", "working", "working"]);
+  });
+});
+
+describe("workspace titles", () => {
+  const tab = (id, title, focused) => ({ id, surfaceId: "s-" + id, title, focused, pinned: false });
+  const split = (over = {}) => ({
+    workspaces: workspaces({
+      id: "w1",
+      title: "~/dev/app",
+      tabs: [tab("shell", "~/dev/app", true), tab("agent", "π > fix: Make the build green", false)],
+      agents: [agent("idle", { kind: "omp", surfaceId: "s-agent" })],
+      ...over,
+    }),
+  });
+
+  test("a split with a shell, server, or viewer in front shows the agent pane's generated title", () => {
+    const sb = mountSidebar(split());
+    assert.deepEqual(sb.outline(), ["π > fix: Make the build green"]);
+  });
+
+  test("a renamed workspace keeps its name, and so does one whose focused pane hosts the agent", () => {
+    const sb = mountSidebar(split({ title: "My app" }));
+    assert.deepEqual(sb.outline(), ["My app"]);
+    sb.setData(split({ agents: [agent("idle", { kind: "omp", surfaceId: "s-shell" }), agent("working", { surfaceId: "s-agent" })] }));
+    assert.deepEqual(sb.outline(), ["~/dev/app"]);
+  });
+
+  test("an agent record without a pane never names the row, even when it is the newest", () => {
+    const sb = mountSidebar(split({
+      agents: [agent("working", { lastActivityAt: 50 }), agent("idle", { kind: "omp", panelId: "agent", surfaceId: "bonsplit-uuid", lastActivityAt: 10 })],
+    }));
+    assert.deepEqual(sb.outline(), ["π > fix: Make the build green"]);
+  });
+
+  test("an ended agent's pane, an unbound record, or a single pane leaves cmux's title alone", () => {
+    const sb = mountSidebar(split({ agents: [agent("ended", { surfaceId: "s-agent" })] }));
+    assert.deepEqual(sb.outline(), ["~/dev/app"]);
+    sb.setData(split({ agents: [agent("idle")] }));
+    assert.deepEqual(sb.outline(), ["~/dev/app"]);
+    sb.setData(split({ tabs: [tab("shell", "~/dev/app", true)] }));
+    assert.deepEqual(sb.outline(), ["~/dev/app"]);
+  });
+
+  test("with two agent panes the newest agent names the row", () => {
+    const sb = mountSidebar(split({
+      tabs: [tab("shell", "~/dev/app", true), tab("a", "π > one", false), tab("b", "π > two", false)],
+      agents: [agent("idle", { surfaceId: "s-a", lastActivityAt: 10 }), agent("idle", { surfaceId: "s-b", lastActivityAt: 20 })],
+    }));
+    assert.deepEqual(sb.outline(), ["π > two"]);
+  });
+
+  test("Return on the prefilled name renames nothing; a new name renames; an empty one clears", () => {
+    const sb = mountSidebar(split());
+    sb.row("π > fix: Make the build green").doubleTap();
+    assert.equal(sb.rows()[0].editing, "π > fix: Make the build green");
+    sb.rows()[0].submit("π > fix: Make the build green");
+    assert.deepEqual(sb.take(), []);
+    assert.deepEqual(sb.outline(), ["π > fix: Make the build green"]);
+    sb.rows()[0].doubleTap();
+    sb.rows()[0].submit("Build");
+    assert.deepEqual(sb.take(), [{ method: "workspace.action", params: { action: "rename", workspace_id: "w1", title: "Build" } }]);
+    assert.deepEqual(sb.outline(), ["Build"]); // optimistic, until cmux echoes it
+    sb.rows()[0].doubleTap();
+    sb.rows()[0].submit("");
+    assert.deepEqual(sb.take(), [{ method: "workspace.action", params: { action: "clear_name", workspace_id: "w1" } }]);
+    assert.deepEqual(sb.outline(), ["π > fix: Make the build green"]); // the in-flight rename is dropped too
+  });
+
+  test("a title that moves while the editor is open (omp's spinner) still makes Return on the prefill a no-op", () => {
+    const frame = (glyph) => split({ tabs: [tab("shell", "~/dev/app", true), tab("agent", `π ${glyph} fix: Make the build green`, false)] });
+    const sb = mountSidebar(frame("⠋"));
+    sb.rows()[0].doubleTap();
+    sb.setData(frame("⠙"));
+    sb.setData(frame(">"));
+    sb.rows()[0].submit("π ⠋ fix: Make the build green");
+    assert.deepEqual(sb.take(), []);
+    assert.deepEqual(sb.outline(), ["π > fix: Make the build green"]);
+  });
+});
+
 describe("recently finished clock", () => {
   const HOUR = 3600;
   const one = (now, agents, extra = {}) => ({ now, workspaces: workspaces({ id: "w1", title: "job", agents, ...extra }) });
@@ -119,7 +293,8 @@ describe("recently finished clock", () => {
   });
 
   test("a new turn keeps the clock beside its orange dot, and its finish starts a new hour", () => {
-    const open = (now, status) => one(now, [agent(status)], { selected: true });
+    // A working Claude record heartbeats through its tool hooks.
+    const open = (now, status) => one(now, [agent(status, { lastActivityAt: now })], { selected: true });
     const sb = mountSidebar(open(0, "working"), CLOCK);
     sb.setData(open(60, "idle"));
     assert.equal(sb.row("job").recent(), true); // finished while open
@@ -135,10 +310,11 @@ describe("recently finished clock", () => {
   });
 
   test("a turn running past the hour still drops the clock of the previous finish", () => {
-    const sb = mountSidebar(one(0, [agent("working")]), CLOCK);
+    const busy = (now) => one(now, [agent("working", { lastActivityAt: now })]);
+    const sb = mountSidebar(busy(0), CLOCK);
     sb.setData(one(100, [agent("idle")]));
-    sb.setData(one(200, [agent("working")]));
-    sb.setData(one(100 + HOUR, [agent("working")]));
+    sb.setData(busy(200));
+    sb.setData(busy(100 + HOUR));
     assert.deepEqual([sb.row("job").indicator(), sb.row("job").recent()], ["working", false]);
   });
 

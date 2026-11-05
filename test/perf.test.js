@@ -9,8 +9,9 @@ import { describe, test } from "node:test";
 import { agent, group, mountSidebar, workspaces } from "./harness.js";
 
 // 60 workspaces in 12 groups nested 3 levels deep: T0..T3, each with T/S and
-// T/S/U; every group has its anchor plus 4 members. A few agents are working.
-function big(over = {}) {
+// T/S/U; every group has its anchor plus 4 members. A few agents are working,
+// with their last hook activity at `now`, as a working agent's would be.
+function big(over = {}, now = 0) {
   const list = [];
   const groups = [];
   for (let t = 0; t < 4; t += 1) {
@@ -26,7 +27,7 @@ function big(over = {}) {
   return {
     workspaces: workspaces(...list.map((w) => ({
       ...w,
-      ...(busy.has(w.id) ? { agents: [agent("working", { id: "s-" + w.id })] } : {}),
+      ...(busy.has(w.id) ? { agents: [agent("working", { id: "s-" + w.id, lastActivityAt: now })] } : {}),
       ...(over[w.id] ?? {}),
     }))),
     groups,
@@ -59,7 +60,7 @@ describe("scene op budget", () => {
   });
 
   test("clock ticks cost nothing while a clock icon is shown", () => {
-    const at = (now, status) => ({ ...big({ "T0#2": { agents: [agent(status, { id: "s-T0#2" })] } }), now });
+    const at = (now, status) => ({ ...big({ "T0#2": { agents: [agent(status, { id: "s-T0#2" })] } }, now), now });
     const sb = mountSidebar(at(0, "working"), { recentClock: true });
     sb.setData(at(0, "idle"));
     assert.equal(sb.row("T0 item 2").recent(), true);

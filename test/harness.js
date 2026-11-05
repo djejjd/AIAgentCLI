@@ -95,15 +95,17 @@ export function mountSidebar(state, settings = {}) {
   vm.runInContext(fs.readFileSync(RUNTIME_PATH, "utf8"), ctx, { filename: "SidebarRuntime.js" });
 
   // `now` is the wall time in epoch seconds (Date.now in the sidebar) and,
-  // unless `clock` says otherwise, the host's clock key. Both go in first, so
-  // a turn that ends in this push is stamped with this push's time.
+  // unless `clock` says otherwise, the host's clock key. It goes in first, so
+  // a turn that ends in this push is stamped with this push's time; the clock
+  // key goes in last, after the data it describes, as a real tick's staleness
+  // check reads data at most a second behind the clock, never minutes.
   const setData = ({ workspaces: ws = [], groups = [], now = 0, clock = now }) => {
     const selected = ws.find((w) => w.selected);
     vm.runInContext(`Date.now = () => ${now * 1000};`, ctx);
-    ctx.__setData("clock", JSON.stringify({ epoch: clock }));
     ctx.__setData("workspaces", JSON.stringify(ws));
     ctx.__setData("groups", JSON.stringify(groups));
     ctx.__setData("selectedId", JSON.stringify(selected ? selected.id : ""));
+    ctx.__setData("clock", JSON.stringify({ epoch: clock }));
   };
   setData(state);
   const source = fs.readFileSync(SOURCE_PATH, "utf8");
