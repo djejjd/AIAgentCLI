@@ -133,7 +133,13 @@ const SETTINGS = {
   // 暂时隐藏顶部 Favorites 筛选入口和工作区右键收藏操作。
   showFavoritesFilter: false,
   showFavoriteAction: false,
+  // 左侧项目栏字体整体放大；原生侧栏最小宽度由 cmux 的
+  // sidebarMinimumWidth 设置单独控制，不在这里改变。
+  fontScale: 1.15,
 };
+
+// 左侧栏字号统一从基础值缩放，并向上对齐到 0.5 磅，避免行高出现零碎值。
+const sidebarFont = (size) => Math.ceil(size * SETTINGS.fontScale * 2) / 2;
 
 // --- change-only data ------------------------------------------------------------
 // The runtime never dedupes: a binding re-runs and re-sends its prop whenever
@@ -765,13 +771,13 @@ function projectConversation(w, state) {
   const summaryRows = memoJSON(() => summary() ? ["summary"] : []);
   return VStack({ alignment: "leading", spacing: 3 }, [
     HStack({ spacing: 6 }, [
-      Text(label).font(11).lineLimit(1).truncation("tail").layoutPriority(1),
+      Text(label).font(sidebarFont(11)).lineLimit(1).truncation("tail").layoutPriority(1),
       ForEach({ items: memoJSON(() => state() ? ["dot"] : []), key: (k) => k }, () => activityDot(state)),
-      Text(status).font(10).color(memo(() => status() === "待输入" ? "orange" : "secondary"))
+      Text(status).font(sidebarFont(10)).color(memo(() => status() === "待输入" ? "orange" : "secondary"))
         .lineLimit(1).layoutPriority(2),
     ]),
     ForEach({ items: summaryRows, key: (k) => k }, () =>
-      Text(summary).font(10).color("secondary").lineLimit(1).truncation("tail")),
+      Text(summary).font(sidebarFont(10)).color("secondary").lineLimit(1).truncation("tail")),
   ]).frame({ maxWidth: "infinity", alignment: "leading" });
 }
 
@@ -1212,7 +1218,7 @@ const emptyMessage = memo(() => {
 function barChip(label, isOn, toggle, icon) {
   return HStack({ spacing: 4 }, [
     icon,
-    Text(label).font(11).weight("medium").lineLimit(1)
+    Text(label).font(sidebarFont(11)).weight("medium").lineLimit(1)
       .color(memo(() => (isOn() ? "primary" : "secondary"))),
   ])
     .paddingHorizontal(8)
@@ -1701,12 +1707,12 @@ function workspaceRow(w, e) {
         // Red bookmark on favorites.
         if (k === "pin") return Image("bookmark.fill").font(10).color(FAVORITE_RED).frame({ width: 9 }).paddingTrailing(5);
         // Dim "B › C ›" path for a row shown away from its group.
-        return Text(crumb).font(13).color("tertiary").lineLimit(1).paddingTrailing(4);
+        return Text(crumb).font(sidebarFont(11)).color("tertiary").lineLimit(1).paddingTrailing(4);
       }),
       ...(SETTINGS.projectGroups ? [
         // 用原生符号区分 AI 与普通终端，不加载外部图片。
         Image(memo(() => projectAgentSymbol(w())))
-          .font(11).color("secondary").frame({ width: 16 }).paddingTrailing(4),
+          .font(sidebarFont(11)).color("secondary").frame({ width: 18 }).paddingTrailing(4),
         projectConversation(w, state).color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
       ] : [
         Text(memo(() => displayTitle(w())))
@@ -1781,7 +1787,7 @@ function workspaceEditRow(w, e) {
         setEditingId(null);
       },
       onCancel: () => setEditingId(null),
-    }).font(13),
+    }).font(sidebarFont(12)),
   ])
     .paddingHorizontal(10)
     .paddingVertical(6)
@@ -1817,16 +1823,16 @@ function groupHeader(entry, e) {
     // rotation animates as one motion with the accordion, and the fixed box
     // keeps the header height constant.
     Image("chevron.right")
-      .font(10).weight("semibold").color("tertiary")
+      .font(sidebarFont(10)).weight("semibold").color("tertiary")
       .rotation(memo(() => (e().collapsed ? 0 : 90)))
       .frame({ width: 14, height: 16 })
       .onTap(toggle),
     // The anchor's own dot and clock overlay a leading inset that only opens
     // while they show. The host auto-boosts only a bare truncating Text over
     // sibling Spacers, so the wrapper needs the boost explicitly.
-    ...(SETTINGS.projectGroups ? [Image("folder").font(12).color("secondary")] : []),
+    ...(SETTINGS.projectGroups ? [Image("folder").font(sidebarFont(12)).color("secondary")] : []),
     ZStack({ alignment: "leading" }, [
-      Text(memo(() => e().leaf)).font(12).weight("semibold").lineLimit(1).truncation("tail")
+      Text(memo(() => e().leaf)).font(sidebarFont(12)).weight("semibold").lineLimit(1).truncation("tail")
         .color(memo(() => (selected() ? "primary" : "secondary")))
         .paddingLeading(memo(() => dotInset() + (recentShown() ? CLOCK_SLOT : 0))),
       ForEach({ items: marks, key: (k) => k }, (_, k) =>
@@ -1836,7 +1842,7 @@ function groupHeader(entry, e) {
     // Hover-revealed `+`, styled like the row close button. Virtual headers
     // have no group to create into, so theirs stays hidden and inert.
     Image("plus")
-      .font(10).weight("semibold").color("secondary")
+      .font(sidebarFont(10)).weight("semibold").color("secondary")
       .padding(3)
       .cornerRadius(8)
       .hoverBackground("#7f7f7f4a")
@@ -1848,7 +1854,7 @@ function groupHeader(entry, e) {
   const content = SETTINGS.projectGroups ? VStack({ alignment: "leading", spacing: 2 }, [
     titleLine,
     ForEach({ items: memoJSON(() => projectBranch(nodeKey) ? ["branch"] : []), key: (k) => k }, () =>
-      Text(memo(() => projectBranch(nodeKey))).font(10).color("secondary")
+      Text(memo(() => projectBranch(nodeKey))).font(sidebarFont(10)).color("secondary")
         .help(memo(() => projectBranch(nodeKey))).lineLimit(2).truncation("middle")
         .frame({ maxWidth: "infinity", alignment: "leading" }).paddingLeading(32)),
   ]) : titleLine;

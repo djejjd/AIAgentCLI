@@ -139,3 +139,27 @@ describe("favorite controls", () => {
     assert.equal(labels.includes("Unfavorite"), false);
   });
 });
+
+describe("sidebar readability", () => {
+  const state = () => ({
+    groups: [group("g1", "Project", "w1")],
+    workspaces: workspaces({
+      id: "w1",
+      title: "running",
+      description: "project task",
+      group: "g1",
+      agents: [agent("working")],
+    }),
+  });
+
+  test("project and agent text use the larger sidebar scale", () => {
+    const sb = mountAiaProjects(state(), { autoProjectGroups: false });
+    const row = sb.row("Claude Code");
+
+    assert.equal(sb.row("Project").fontSize("Project"), 14);
+    assert.equal(row.fontSize("Claude Code"), 13);
+    assert.equal(row.fontSize("运行中"), 11.5);
+    assert.equal(row.fontSize("project task"), 11.5);
+    assert.equal(sb.chip("Active").fontSize(), 13);
+  });
+});
