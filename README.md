@@ -1,7 +1,7 @@
 <!--
 状态: active
 创建: 2026-10-01
-最后更新: 2026-11-12
+最后更新: 2026-11-13
 关联: src/aia-projects.js; docs/upstream.md
 -->
 
