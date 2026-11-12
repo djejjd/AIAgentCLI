@@ -96,8 +96,8 @@ describe("Active project folding", () => {
     sb.chip("Active").tap();
 
     assert.equal(sb.outline().length, 4);
-    assert.ok(sb.row("running"));
-    assert.ok(sb.row("idle"));
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Running")).length, 1);
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Ready")).length, 2);
     assert.ok(sb.row("shell"));
     assert.deepEqual(sb.take(), [
       { method: "workspace.group.expand", params: { group_id: "g1" } },
@@ -108,22 +108,22 @@ describe("Active project folding", () => {
     const sb = mountAiaProjects(project(false), { autoProjectGroups: false });
 
     sb.chip("Active").tap();
-    assert.ok(sb.row("running"));
-    assert.ok(sb.row("idle"));
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Running")).length, 1);
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Ready")).length, 2);
     assert.ok(sb.row("shell"));
     sb.take();
 
     sb.chip("Active").tap();
-    assert.ok(sb.row("running"));
-    assert.throws(() => sb.row("idle"));
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Running")).length, 1);
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Ready")).length, 0);
     assert.throws(() => sb.row("shell"));
     assert.deepEqual(sb.take(), [
       { method: "workspace.group.collapse", params: { group_id: "g1" } },
     ]);
 
     sb.row("Project").tap();
-    assert.ok(sb.row("running"));
-    assert.ok(sb.row("idle"));
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Running")).length, 1);
+    assert.equal(sb.rows().filter((row) => row.texts.includes("Ready")).length, 2);
     assert.ok(sb.row("shell"));
   });
 });
@@ -207,18 +207,62 @@ describe("sidebar readability", () => {
       title: "running",
       description: "project task",
       group: "g1",
-      agents: [agent("working")],
+      agents: [agent("working", { id: "agent-1" })],
     }),
   });
 
   test("project and agent text use the larger sidebar scale", () => {
-    const sb = mountAiaProjects(state(), { autoProjectGroups: false });
-    const row = sb.row("Claude Code");
+    const sb = mountAiaProjects(state(), {
+      autoProjectGroups: false,
+      modelMap: {
+        "agent-1": { model: "deepseek-flash", provider: "deepseek", name: "DeepSeek Flash" },
+      },
+    });
+    const row = sb.row("DeepSeek Flash");
 
     assert.equal(sb.row("Project").fontSize("Project"), 14);
-    assert.equal(row.fontSize("Claude Code"), 13);
+    assert.equal(row.fontSize("DeepSeek Flash"), 13);
     assert.equal(row.fontSize("Running"), 11.5);
     assert.equal(row.fontSize("project task"), 11.5);
     assert.equal(sb.chip("Active").fontSize(), 13);
+  });
+});
+
+describe("model identity", () => {
+  const state = () => ({
+    workspaces: workspaces({
+      id: "w1",
+      title: "models",
+      latestAt: 90,
+      agents: [
+        agent("working", { id: "deepseek-1", kind: "codex", name: "Codex", surfaceId: "s1", lastActivityAt: 90 }),
+        agent("idle", { id: "openai-1", kind: "codex", name: "Codex", surfaceId: "s2", lastActivityAt: 80 }),
+        agent("idle", { id: "unknown-1", kind: "claude", name: "Claude", surfaceId: "s3", lastActivityAt: 70 }),
+      ],
+    }),
+  });
+
+  const modelMap = {
+    "deepseek-1": { model: "deepseek-flash", provider: "deepseek", name: "DeepSeek Flash" },
+    "openai-1": { model: "gpt-6.1-sol", provider: "openai", name: "GPT-6.1 Sol" },
+  };
+
+  test("shows every agent model in the same workspace", () => {
+    const sb = mountAiaProjects(state(), { autoProjectGroups: false, modelMap });
+    const row = sb.row("DeepSeek Flash");
+
+    assert.ok(row.texts.includes("DeepSeek Flash"));
+    assert.ok(row.texts.includes("GPT-6.1 Sol"));
+    assert.ok(row.texts.includes("未知模型"));
+    assert.equal(row.texts.some((text) => text.includes("+2")), false);
+  });
+
+  test("uses monochrome provider icons and one unknown fallback", () => {
+    const sb = mountAiaProjects(state(), { autoProjectGroups: false, modelMap });
+    const images = sb.row("DeepSeek Flash").images();
+
+    assert.ok(images.some((image) => image.name === "water.waves" && image.color === "secondary"));
+    assert.ok(images.some((image) => image.name === "sparkles" && image.color === "secondary"));
+    assert.ok(images.some((image) => image.name === "circle-help" && image.color === "secondary"));
   });
 });

@@ -9,17 +9,19 @@
 
 ## 稳定热更新
 
-- 正式侧栏固定链接：
-  `~/.config/cmux/sidebars/aia-projects.js` →
-  `/Users/lanser/Code/AIAgentCLI-main-hot/src/aia-projects.js`。
-- 稳定 worktree 只检出 `origin/main`，不得切换到功能分支。
+- 稳定源码 worktree：`/Users/lanser/Code/AIAgentCLI-main-hot`，只检出
+  `origin/main`，不得切换到功能分支。
+- 正式侧栏 `~/.config/cmux/sidebars/aia-projects.js` 由稳定源码和本地模型映射生成。
 - 禁止创建分支专属热更新文件；PR 合并后立即更新同一个稳定 worktree 并切回
   `aia-projects`，不等用户再次提醒。
-- 发布后 `HEAD` 必须等于 `origin/main`，链接必须命中上述稳定路径，校验失败则保留上一版。
+- 发布后稳定 worktree 的 `HEAD` 必须等于 `origin/main`；校验失败则保留上一版。
 
 ```sh
 git -C /Users/lanser/Code/AIAgentCLI-main-hot fetch origin main
 git -C /Users/lanser/Code/AIAgentCLI-main-hot checkout --detach origin/main
+node /Users/lanser/Code/AIAgentCLI-main-hot/scripts/model-map.js \
+  --source /Users/lanser/Code/AIAgentCLI-main-hot/src/aia-projects.js \
+  --output ~/.config/cmux/sidebars/aia-projects.js
 cmux sidebar validate aia-projects
 cmux sidebar select aia-projects
 cmux reload-config
@@ -32,8 +34,9 @@ cmux reload-config
 - 预览不得修改正式链接；验证结束必须切回 `aia-projects`。
 
 ```sh
-ln -sfn /path/to/dev-worktree/src/aia-projects.js \
-  ~/.config/cmux/sidebars/aia-projects-preview.js
+node /path/to/dev-worktree/scripts/model-map.js \
+  --source /path/to/dev-worktree/src/aia-projects.js \
+  --output ~/.config/cmux/sidebars/aia-projects-preview.js
 cmux sidebar validate aia-projects-preview
 cmux sidebar select aia-projects-preview
 

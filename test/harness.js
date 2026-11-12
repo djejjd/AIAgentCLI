@@ -173,6 +173,10 @@ export function mountSidebar(state, settings = {}, options = {}) {
       recent() {
         return findDeep(n.id, (x) => x.type === "image" && x.props.systemName === "clock", { skipHidden: true }).length > 0;
       },
+      images() {
+        return findDeep(n.id, (x) => x.type === "image" && x.props.systemName, { skipHidden: true })
+          .map((x) => ({ name: x.props.systemName, color: x.props.color }));
+      },
       // An important workspace's title is red.
       important() {
         return findDeep(n.id, (x) => x.type === "text" && x.props.color === "#FF453A", { skipHidden: true }).length > 0;
