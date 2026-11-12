@@ -284,17 +284,29 @@ const RECENT_SECONDS = 60 * 60;
 // session (omp /new, an agent restarted in the same tab) can sit at working
 // for good: only the newest record per hosting tab counts.
 const CLAUDE_STALE_SECONDS = 10 * 60;
+// Other agents update lastActivityAt on hook activity. Keep a long grace period
+// for reasoning between hooks, then stop claiming work if the host never sent
+// its final Stop/ended event.
+const AGENT_STALE_SECONDS = 30 * 60;
 const OMP_WAITING_TITLE = /^(?:\S+ )?[>!] /;
 
-// The newest record per hosting tab, in cmux's order (most recent first).
+const agentBinding = (a) => a.surfaceId || a.panelId || "";
+
+// The newest record per hosting tab, plus an unbound record only while it is
+// at least as new as every bound record. A stale unbound `working` record can
+// otherwise outlive the newer idle/ended record for the same conversation.
 function liveAgents(w) {
   const byTab = new Map();
   for (const a of w.agents || []) {
-    const key = a.surfaceId || a.panelId || a.id;
+    const key = agentBinding(a) || a.id;
     const prev = byTab.get(key);
     if (!prev || (a.lastActivityAt ?? 0) > (prev.lastActivityAt ?? 0)) byTab.set(key, a);
   }
-  return [...byTab.values()];
+  const records = [...byTab.values()];
+  const newestBound = records
+    .filter((a) => agentBinding(a))
+    .reduce((at, a) => Math.max(at, a.lastActivityAt ?? 0), -Infinity);
+  return records.filter((a) => agentBinding(a) || (a.lastActivityAt ?? 0) >= newestBound);
 }
 
 // The tab hosting an agent record, or null when cmux reports no binding.
@@ -316,9 +328,12 @@ function titleSaysWaiting(w, a) {
 // The records that claim work, after the rules above except time.
 const busyAgents = (w) => liveAgents(w).filter((a) => claimsWork(a) && !titleSaysWaiting(w, a));
 const isWorking = (w) => !!w && busyAgents(w).length > 0;
-// Working by the data, but every busy record is a quiet claude one.
+const staleAfter = (a) => a.kind === "claude" ? CLAUDE_STALE_SECONDS : AGENT_STALE_SECONDS;
+const agentIsStale = (a, now) =>
+  a.status === "working" && now - (a.lastActivityAt ?? 0) >= staleAfter(a);
+// Working by the data, but every busy record has gone quiet.
 const allStale = (busy, now) =>
-  busy.every((a) => a.kind === "claude" && now - (a.lastActivityAt ?? 0) >= CLAUDE_STALE_SECONDS);
+  busy.every((a) => agentIsStale(a, now));
 
 // A 14pt dot slot. `state` is a change-only signal; the dot hides while it
 // is null. One node: every rendered node costs the host work on every scroll
@@ -728,14 +743,24 @@ function compactSummary(text) {
   return value.length > 88 ? value.slice(0, 88) + "…" : value;
 }
 
-function projectStatus(w, a) {
-  if (!a) return "";
-  if (titleSaysWaiting(w, a)) return "待输入";
-  if (claimsWork(a)) {
-    minute();
-    return allStale([a], wallNow()) ? "无近期活动" : "运行中";
+const PROJECT_STATES = {
+  running: { label: "Running", color: WORKING_ORANGE, shape: "circle" },
+  ready: { label: "Ready", color: FINISHED_GREEN, shape: "roundedRectangle" },
+};
+
+// 二元状态只回答“当前是否仍有任务在处理”。
+function projectState(w) {
+  if (!w) return "ready";
+  const records = liveAgents(w);
+  if (records.length === 0) {
+    return w.latestAt || w.latestPrompt || w.latestMessage ? "ready" : null;
   }
-  return ({ idle: "就绪", needs_input: "待输入", ended: "已结束" })[a.status] ?? "未知";
+  const busy = records.filter((a) => claimsWork(a) && !titleSaysWaiting(w, a));
+  if (busy.length > 0) {
+    minute();
+    return allStale(busy, wallNow()) ? "ready" : "running";
+  }
+  return "ready";
 }
 
 // 使用本机 SF Symbols；名称仍显示工具原名，未知工具用通用符号。
@@ -755,14 +780,15 @@ function projectBranch(nodeKey) {
 }
 
 // 对话两行布局：代理名称与状态优先，任务摘要次之；纯终端仍使用原标题。
-function projectConversation(w, state) {
+function projectConversation(w) {
   const a = memoJSON(() => projectAgent(w()));
   const label = memo(() => {
     const agent = a();
     const count = liveAgents(w() ?? {}).filter((a) => a.status !== "ended").length;
     return (agent?.name || agent?.kind || displayTitle(w())) + (count > 1 ? " +" + (count - 1) : "");
   });
-  const status = memo(() => projectStatus(w(), a()));
+  const status = memo(() => PROJECT_STATES[projectState(w())] ?? { label: "", color: "secondary" });
+  const marker = memoJSON(() => status().shape ? [status().shape] : []);
   const summary = memo(() => {
     const agent = a();
     return agent ? compactSummary(w()?.description || agentTab(w(), agent)?.latestPrompt
@@ -772,8 +798,14 @@ function projectConversation(w, state) {
   return VStack({ alignment: "leading", spacing: 3 }, [
     HStack({ spacing: 6 }, [
       Text(label).font(sidebarFont(11)).lineLimit(1).truncation("tail").layoutPriority(1),
-      ForEach({ items: memoJSON(() => state() ? ["dot"] : []), key: (k) => k }, () => activityDot(state)),
-      Text(status).font(sidebarFont(10)).color(memo(() => status() === "待输入" ? "orange" : "secondary"))
+      ForEach({ items: marker, key: (k) => k }, (_, shape) => {
+        const color = memo(() => status().color);
+        const dot = shape === "circle"
+          ? Circle({ size: 7 }).fill(color)
+          : RoundedRectangle({ width: 7, height: 7, cornerRadius: 1.5 }).fill(color);
+        return dot.frame({ width: 10, height: 10 });
+      }),
+      Text(memo(() => status().label)).font(sidebarFont(10)).color(memo(() => status().color))
         .lineLimit(1).layoutPriority(2),
     ]),
     ForEach({ items: summaryRows, key: (k) => k }, () =>
@@ -1713,7 +1745,7 @@ function workspaceRow(w, e) {
         // 用原生符号区分 AI 与普通终端，不加载外部图片。
         Image(memo(() => projectAgentSymbol(w())))
           .font(sidebarFont(11)).color("secondary").frame({ width: 18 }).paddingTrailing(4),
-        projectConversation(w, state).color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
+        projectConversation(w).color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
       ] : [
         Text(memo(() => displayTitle(w())))
           .font(13).lineLimit(1).truncation("tail")

@@ -140,6 +140,65 @@ describe("favorite controls", () => {
   });
 });
 
+describe("conversation status", () => {
+  const statusState = (status, extra = {}) => ({
+    workspaces: workspaces({
+      id: "w1",
+      title: "chat",
+      latestAt: 90,
+      agents: [agent(status, { kind: "codex", name: "Codex", lastActivityAt: 90, ...extra })],
+    }),
+  });
+
+  test("Running and Ready use different shapes and colors", () => {
+    for (const [status, label, color, type] of [
+      ["working", "Running", "#FF8A00", "circle"],
+      ["needs_input", "Ready", "#30D158", "roundedRectangle"],
+      ["idle", "Ready", "#30D158", "roundedRectangle"],
+      ["ended", "Ready", "#30D158", "roundedRectangle"],
+    ]) {
+      const sb = mountAiaProjects(statusState(status), { autoProjectGroups: false });
+      const row = sb.row("Codex");
+      assert.ok(row.texts.includes(label));
+      assert.equal(row.textColor(label), color);
+      assert.deepEqual(row.marker(), { type, color });
+    }
+  });
+
+  test("Ready keeps its green shape after time passes", () => {
+    const state = statusState("idle");
+    state.now = 100;
+    const sb = mountAiaProjects(state, { autoProjectGroups: false });
+    state.now = 100 + 2 * 60 * 60;
+    sb.setData(state);
+    const row = sb.row("Codex");
+    assert.ok(row.texts.includes("Ready"));
+    assert.equal(row.textColor("Ready"), "#30D158");
+    assert.deepEqual(row.marker(), { type: "roundedRectangle", color: "#30D158" });
+  });
+
+  test("Ready remains when agent records are pruned but conversation history remains", () => {
+    const state = statusState("idle");
+    const sb = mountAiaProjects(state, { autoProjectGroups: false });
+    state.workspaces[0].agents = [];
+    sb.setData(state);
+    const row = sb.row("chat");
+    assert.ok(row.texts.includes("Ready"));
+    assert.equal(row.textColor("Ready"), "#30D158");
+    assert.deepEqual(row.marker(), { type: "roundedRectangle", color: "#30D158" });
+  });
+
+  test("an older unbound working record cannot override a newer bound idle record", () => {
+    const state = statusState("idle", { surfaceId: "s-current" });
+    state.now = 100;
+    state.workspaces[0].agents.push(
+      agent("working", { kind: "codex", name: "Codex", lastActivityAt: 80 }),
+    );
+    const sb = mountAiaProjects(state, { autoProjectGroups: false });
+    assert.ok(sb.row("Codex").texts.includes("Ready"));
+  });
+});
+
 describe("sidebar readability", () => {
   const state = () => ({
     groups: [group("g1", "Project", "w1")],
@@ -158,7 +217,7 @@ describe("sidebar readability", () => {
 
     assert.equal(sb.row("Project").fontSize("Project"), 14);
     assert.equal(row.fontSize("Claude Code"), 13);
-    assert.equal(row.fontSize("运行中"), 11.5);
+    assert.equal(row.fontSize("Running"), 11.5);
     assert.equal(row.fontSize("project task"), 11.5);
     assert.equal(sb.chip("Active").fontSize(), 13);
   });

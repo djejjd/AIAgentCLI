@@ -202,6 +202,15 @@ export function mountSidebar(state, settings = {}, options = {}) {
         if (shown.some((x) => x.props.fill === GREEN)) return "finished";
         return null;
       },
+      // Project conversation status marker: distinct shape and color.
+      marker() {
+        const shown = findDeep(n.id,
+          (x) => (x.type === "circle" || x.type === "roundedRectangle")
+            && (x.props.fill === ORANGE || x.props.fill === GREEN),
+          { skipHidden: true });
+        if (!shown.length) return null;
+        return { type: shown[0].type, color: shown[0].props.fill };
+      },
       tap(payload = {}) {
         dispatch(n.id, "tap", payload);
       },
