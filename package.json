@@ -4,7 +4,8 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "check": "node --check src/cmux-sidebar.js && node --check src/aia-projects.js && node --check test/harness.js",
+    "check": "node --check src/cmux-sidebar.js && node --check src/aia-projects.js && node --check scripts/install-codex-interrupt-hook.mjs && node --check test/harness.js",
+    "install-codex-interrupt-hook": "node scripts/install-codex-interrupt-hook.mjs",
     "test": "node --test test/*.test.js"
   }
 }

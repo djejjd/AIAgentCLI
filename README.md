@@ -72,6 +72,24 @@ sh -n install.sh
 cmux sidebar validate aia-projects
 ```
 
+### Codex ESC 中断同步
+
+Codex 原生支持 `Interrupt` hook。安装器会把中断事件转换为 cmux 的 Codex stop 事件，
+让侧栏在用户按 ESC 取消回合后立即显示 `Ready`：
+
+```sh
+npm run install-codex-interrupt-hook
+```
+
+安装器会保留已有 Interrupt hook（例如 Orca），先备份 `~/.codex/hooks.json`，并写入稳定的
+`~/.codex/hooks/aia-projects-codex-interrupt.sh`；重复执行不会产生重复项。
+转发前会把 payload 的 `hook_event_name` 从 `Interrupt` 规范化为 `Stop`，确保 cmux
+真正结束 agent lifecycle，而不只是记录一个没有转换状态的 Interrupt 事件。
+
+安装后首次启动新的 Codex 会话时会出现一次 `Hooks need review`，确认只有新增的
+`aia-projects-codex-interrupt.sh` 为 new/changed 后，选择 `Trust all and continue`。
+已运行中的旧会话不会重新加载 hook，需要新会话生效。
+
 主要入口：
 
 - 侧栏实现：`src/aia-projects.js`
