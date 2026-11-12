@@ -30,6 +30,34 @@ cmux sidebar validate aia-projects
 cmux reload-config
 ```
 
+## 临时验证
+
+临时验证允许使用开发分支，但不得修改稳定 `aia-projects.js` 链接。所有分支共用一个固定预览入口：
+
+```text
+~/.config/cmux/sidebars/aia-projects-preview.js
+```
+
+使用步骤：
+
+```sh
+ln -sfn /path/to/dev-worktree/src/aia-projects.js \
+  ~/.config/cmux/sidebars/aia-projects-preview.js
+cmux sidebar validate aia-projects-preview
+cmux sidebar select aia-projects-preview
+```
+
+验证完成后切回稳定版本：
+
+```sh
+cmux sidebar select aia-projects
+```
+
+- 预览入口可以反复改指向不同开发 worktree，但文件名始终是 `aia-projects-preview.js`。
+- 不得为每个分支创建新的预览文件名。
+- 预览版本只用于临时验收，不能作为长期使用版本、发布来源或稳定热更新来源。
+- 验证结束必须切回 `aia-projects`，确保日常使用始终来自稳定 `origin/main`。
+
 ## 开发要求
 
 - 所有改动经独立分支和 PR 合入 `main`，不直接推送 `main`。
