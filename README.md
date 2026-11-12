@@ -71,6 +71,26 @@ sh -n install.sh
 cmux sidebar validate aia-projects
 ```
 
+## 稳定热更新
+
+cmux 当前使用的侧栏固定指向只检出 `origin/main` 的稳定 worktree：
+
+```text
+~/.config/cmux/sidebars/aia-projects.js
+→ /Users/lanser/Code/AIAgentCLI-main-hot/src/aia-projects.js
+```
+
+功能开发可以使用其他分支或 worktree，但不得把活动侧栏改成这些开发版本。main 更新后执行：
+
+```sh
+git -C /Users/lanser/Code/AIAgentCLI-main-hot fetch origin main
+git -C /Users/lanser/Code/AIAgentCLI-main-hot checkout --detach origin/main
+cmux sidebar validate aia-projects
+cmux reload-config
+```
+
+完整项目规则见 `AGENTS.md`。
+
 主要入口：
 
 - 侧栏实现：`src/aia-projects.js`
