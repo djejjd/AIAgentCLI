@@ -1,10 +1,10 @@
 {
-  "name": "cmux-sidebar",
+  "name": "aiagentcli",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "check": "node --check src/cmux-sidebar.js && node --check test/harness.js",
+    "check": "node --check src/cmux-sidebar.js && node --check src/aia-projects.js && node --check test/harness.js",
     "test": "node --test test/*.test.js"
   }
 }

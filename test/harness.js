@@ -8,7 +8,7 @@ import vm from "node:vm";
 const RUNTIME_PATH =
   process.env.CMUX_SIDEBAR_RUNTIME ??
   "/Applications/cmux.app/Contents/Resources/CmuxSwiftRenderUI_CmuxSwiftRenderUI.bundle/Contents/Resources/SidebarRuntime.js";
-const SOURCE_PATH = new URL("../src/cmux-sidebar.js", import.meta.url);
+const DEFAULT_SOURCE_PATH = new URL("../src/cmux-sidebar.js", import.meta.url);
 
 // --- fixtures ----------------------------------------------------------------
 
@@ -49,7 +49,8 @@ export const agent = (status, extra = {}) => ({
 
 // `settings` overrides the SETTINGS block at the top of the sidebar, the way a
 // user edits it: `{ recentClock: true }`, `{ settingsPage: true }`.
-export function mountSidebar(state, settings = {}) {
+export function mountSidebar(state, settings = {}, options = {}) {
+  const sourcePath = options.sourcePath ?? DEFAULT_SOURCE_PATH;
   const nodes = new Map();
   const actions = [];
   let rootId = null;
@@ -108,7 +109,7 @@ export function mountSidebar(state, settings = {}) {
     ctx.__setData("clock", JSON.stringify({ epoch: clock }));
   };
   setData(state);
-  const source = fs.readFileSync(SOURCE_PATH, "utf8");
+  const source = fs.readFileSync(sourcePath, "utf8");
   const settingsBlock = /^const SETTINGS = \{[\s\S]*?^\};$/m;
   if (!settingsBlock.test(source)) throw new Error("no SETTINGS block in the sidebar source");
   const edited = source.replace(settingsBlock, (block) => `${block}\nObject.assign(SETTINGS, ${JSON.stringify(settings)});`);
@@ -316,6 +317,13 @@ export function mountSidebar(state, settings = {}) {
     if (!toggle) throw new Error(`no setting "${label}"`);
     dispatch(toggle.id, "tap", {});
   };
+  const tapButton = (label) => {
+    const button = findDeep(rootId, (n) =>
+      (n.type === "button" || n.props.tappable === true)
+      && (n.props.text ?? textsOf(n).join(" ")).startsWith(label))[0];
+    if (!button) throw new Error(`no button "${label}"`);
+    dispatch(button.id, "tap", {});
+  };
 
   return {
     setData,
@@ -330,6 +338,7 @@ export function mountSidebar(state, settings = {}) {
     // The settings page's texts, or null while it is closed.
     settings: () => (openPanel("Sidebar Settings") ? textsOf(openPanel("Sidebar Settings")) : null),
     tapSetting,
+    tapButton,
     // Taps the settings page's ✕.
     closeSettings() {
       const page = openPanel("Sidebar Settings");

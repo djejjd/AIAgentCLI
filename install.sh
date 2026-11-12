@@ -1,18 +1,18 @@
 #!/bin/sh
-# Installs the cmux-sidebar custom sidebar into cmux.
+# Installs the aia-projects custom sidebar into cmux.
 #
-#   curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/djejjd/AIAgentCLI/releases/latest/download/install.sh | sh
 #
 # Options (after `sh -s --` when piped):
 #   --version <tag>   install a specific release, e.g. v0.1.0-beta (default: latest)
-#   --dev             symlink this clone's src/cmux-sidebar.js instead (edits hot-reload)
+#   --dev             symlink this clone's src/aia-projects.js instead (edits hot-reload)
 #   --uninstall       remove the installed sidebar file
 #
 # Run it from a cmux terminal: cmux only accepts CLI commands from processes it started.
 set -eu
 
-repo="s4ff0x/cmux-sidebar"
-name="cmux-sidebar"
+repo="djejjd/AIAgentCLI"
+name="aia-projects"
 dir="$HOME/.config/cmux/sidebars"
 dest="$dir/$name.js"
 version="latest"
@@ -54,7 +54,7 @@ backup=""
 set_aside_foreign() {
   if [ -L "$dest" ]; then
     rm -f "$dest"
-  elif [ -e "$dest" ] && ! head -n 1 "$dest" | grep -q '^// cmux-sidebar:'; then
+  elif [ -e "$dest" ] && ! head -n 1 "$dest" | grep -q '^// aia-projects:'; then
     backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
     mv "$dest" "$backup"
     echo "Moved your existing $dest to $backup"
@@ -78,7 +78,7 @@ else
   trap 'rm -f "$tmp" "$prev"' EXIT
   echo "Downloading $url"
   curl -fsSL "$url" -o "$tmp" || { echo "Download failed. Check the version tag and your connection." >&2; exit 1; }
-  head -n 1 "$tmp" | grep -q '^// cmux-sidebar:' || { echo "The downloaded file is not cmux-sidebar; nothing was changed." >&2; exit 1; }
+  head -n 1 "$tmp" | grep -q '^// aia-projects:' || { echo "The downloaded file is not aia-projects; nothing was changed." >&2; exit 1; }
   if [ -f "$dest" ] && [ ! -L "$dest" ]; then cp "$dest" "$prev"; fi
   set_aside_foreign
   cp "$tmp" "$dest"
