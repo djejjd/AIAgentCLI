@@ -136,10 +136,13 @@ const SETTINGS = {
   // 左侧项目栏字体整体放大；原生侧栏最小宽度由 cmux 的
   // sidebarMinimumWidth 设置单独控制，不在这里改变。
   fontScale: 1.15,
+  // 测试或手工覆盖使用；正式热更新会注入 GENERATED_MODEL_MAP。
+  modelMap: {},
 };
 
 // 左侧栏字号统一从基础值缩放，并向上对齐到 0.5 磅，避免行高出现零碎值。
 const sidebarFont = (size) => Math.ceil(size * SETTINGS.fontScale * 2) / 2;
+const GENERATED_MODEL_MAP = {};
 
 // --- change-only data ------------------------------------------------------------
 // The runtime never dedupes: a binding re-runs and re-sends its prop whenever
@@ -763,12 +766,71 @@ function projectState(w) {
   return "ready";
 }
 
-// 使用本机 SF Symbols；名称仍显示工具原名，未知工具用通用符号。
-function projectAgentSymbol(w) {
-  const a = projectAgent(w);
-  if (!a) return "terminal";
-  return ({ codex: "chevron.left.forwardslash.chevron.right", claude: "sparkle",
-    gemini: "diamond", grok: "moon", kimi: "moon.stars" })[a.kind] ?? "sparkles";
+const MODEL_ICONS = {
+  deepseek: "water.waves",
+  openai: "sparkles",
+  anthropic: "sun.max",
+  google: "diamond",
+  xai: "bolt",
+  alibaba: "cloud",
+  moonshot: "moon.stars",
+  unknown: "circle-help",
+};
+
+function providerForModel(model) {
+  const value = String(model || "").toLowerCase();
+  if (value.startsWith("deepseek")) return "deepseek";
+  if (/^(gpt|o[134]|chatgpt)/.test(value)) return "openai";
+  if (value.startsWith("claude")) return "anthropic";
+  if (value.startsWith("gemini")) return "google";
+  if (value.startsWith("grok")) return "xai";
+  if (/^(qwen|tongyi)/.test(value)) return "alibaba";
+  if (/^(kimi|moonshot)/.test(value)) return "moonshot";
+  return "unknown";
+}
+
+function displayModelName(model) {
+  const value = String(model || "").trim();
+  if (!value) return "未知模型";
+  const families = [
+    [/^deepseek[-_ ]?(.*)$/i, "DeepSeek"],
+    [/^gpt[-_ ]?(.*)$/i, "GPT"],
+    [/^claude[-_ ]?(.*)$/i, "Claude"],
+    [/^gemini[-_ ]?(.*)$/i, "Gemini"],
+    [/^grok[-_ ]?(.*)$/i, "Grok"],
+    [/^(?:qwen|tongyi)[-_ ]?(.*)$/i, "Qwen"],
+    [/^(?:kimi|moonshot)[-_ ]?(.*)$/i, "Kimi"],
+  ];
+  const title = (token) =>
+    /^\d/.test(token) ? token : token.charAt(0).toUpperCase() + token.slice(1);
+  for (const [pattern, family] of families) {
+    const match = value.match(pattern);
+    if (!match) continue;
+    const tokens = match[1].split(/[-_ ]+/).filter(Boolean).map(title);
+    const suffix = tokens.join(" ");
+    if (!suffix) return family;
+    return family === "GPT" && /^\d/.test(tokens[0]) ? `${family}-${suffix}` : `${family} ${suffix}`;
+  }
+  return value.split(/[-_ ]+/).filter(Boolean).map(title).join(" ");
+}
+
+function agentModel(a) {
+  const mapped = SETTINGS.modelMap?.[a?.id] ?? GENERATED_MODEL_MAP[a?.id] ?? null;
+  const model = mapped?.model || mapped?.modelId || "";
+  const provider = mapped?.provider || providerForModel(model);
+  return {
+    name: mapped?.name || displayModelName(model),
+    provider,
+    icon: MODEL_ICONS[provider] || MODEL_ICONS.unknown,
+  };
+}
+
+function agentProjectState(w, a) {
+  if (claimsWork(a) && !titleSaysWaiting(w, a)) {
+    minute();
+    return allStale([a], wallNow()) ? "ready" : "running";
+  }
+  return "ready";
 }
 
 // 分支来自整组真实工作区；不同分支不可冒充单一分支。
@@ -779,37 +841,71 @@ function projectBranch(nodeKey) {
   return branches.length > 1 ? "多分支" : branches[0] ?? "";
 }
 
-// 对话两行布局：代理名称与状态优先，任务摘要次之；纯终端仍使用原标题。
+// 每个 Agent 会话各占一组两行信息；模型未知时统一使用问号图标。
 function projectConversation(w) {
-  const a = memoJSON(() => projectAgent(w()));
-  const label = memo(() => {
-    const agent = a();
-    const count = liveAgents(w() ?? {}).filter((a) => a.status !== "ended").length;
-    return (agent?.name || agent?.kind || displayTitle(w())) + (count > 1 ? " +" + (count - 1) : "");
+  const agents = memoJSON(() => {
+    const workspace = w();
+    const records = liveAgents(workspace ?? {});
+    const active = records.filter((agent) => agent.status !== "ended");
+    const shown = active.length ? active : records;
+    if (!shown.length) {
+      const state = PROJECT_STATES[projectState(workspace)] ?? PROJECT_STATES.ready;
+      return [{
+        key: "workspace",
+        icon: "terminal",
+        label: displayTitle(workspace),
+        agentName: "",
+        summary: "",
+        status: state,
+      }];
+    }
+    return shown
+      .slice()
+      .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))
+      .map((agent) => {
+        const model = agentModel(agent);
+        const state = PROJECT_STATES[agentProjectState(workspace, agent)] ?? PROJECT_STATES.ready;
+        return {
+          key: agent.id,
+          icon: model.icon,
+          label: model.name,
+          agentName: agent.name || agent.kind || "",
+          summary: compactSummary(workspace?.description || agentTab(workspace, agent)?.latestPrompt
+            || workspace?.latestPrompt || agent.title || ""),
+          status: state,
+        };
+      });
   });
-  const status = memo(() => PROJECT_STATES[projectState(w())] ?? { label: "", color: "secondary" });
-  const marker = memoJSON(() => status().shape ? [status().shape] : []);
-  const summary = memo(() => {
-    const agent = a();
-    return agent ? compactSummary(w()?.description || agentTab(w(), agent)?.latestPrompt
-      || w()?.latestPrompt || agent.title || displayTitle(w())) : "";
-  });
-  const summaryRows = memoJSON(() => summary() ? ["summary"] : []);
-  return VStack({ alignment: "leading", spacing: 3 }, [
-    HStack({ spacing: 6 }, [
-      Text(label).font(sidebarFont(11)).lineLimit(1).truncation("tail").layoutPriority(1),
-      ForEach({ items: marker, key: (k) => k }, (_, shape) => {
-        const color = memo(() => status().color);
-        const dot = shape === "circle"
-          ? Circle({ size: 7 }).fill(color)
-          : RoundedRectangle({ width: 7, height: 7, cornerRadius: 1.5 }).fill(color);
-        return dot.frame({ width: 10, height: 10 });
-      }),
-      Text(memo(() => status().label)).font(sidebarFont(10)).color(memo(() => status().color))
-        .lineLimit(1).layoutPriority(2),
-    ]),
-    ForEach({ items: summaryRows, key: (k) => k }, () =>
-      Text(summary).font(sidebarFont(10)).color("secondary").lineLimit(1).truncation("tail")),
+  return VStack({ alignment: "leading", spacing: 5 }, [
+    ForEach({ items: agents, key: (agent) => agent.key }, (agent) => {
+      const status = memo(() => agent().status);
+      const marker = memoJSON(() => status().shape ? [status().shape] : []);
+      return VStack({ alignment: "leading", spacing: 2 }, [
+        HStack({ spacing: 6 }, [
+          Image(memo(() => agent().icon)).font(sidebarFont(11))
+            .color("secondary").frame({ width: 18 }).paddingTrailing(4),
+          Text(memo(() => agent().label)).font(sidebarFont(11))
+            .lineLimit(1).truncation("tail").layoutPriority(1),
+          ForEach({ items: marker, key: (k) => k }, (_, shape) => {
+            const color = memo(() => status().color);
+            const dot = shape === "circle"
+              ? Circle({ size: 7 }).fill(color)
+              : RoundedRectangle({ width: 7, height: 7, cornerRadius: 1.5 }).fill(color);
+            return dot.frame({ width: 10, height: 10 });
+          }),
+          Text(memo(() => status().label)).font(sidebarFont(10)).color(memo(() => status().color))
+            .lineLimit(1).layoutPriority(2),
+        ]),
+        HStack({ spacing: 4 }, [
+          Text(memo(() => agent().agentName)).font(sidebarFont(10))
+            .color("secondary").lineLimit(1).layoutPriority(1),
+          Text(memo(() => agent().agentName && agent().summary ? "·" : ""))
+            .font(sidebarFont(10)).color("tertiary"),
+          Text(memo(() => agent().summary)).font(sidebarFont(10))
+            .color("secondary").lineLimit(1).truncation("tail"),
+        ]).paddingLeading(28),
+      ]);
+    }),
   ]).frame({ maxWidth: "infinity", alignment: "leading" });
 }
 
@@ -1742,9 +1838,6 @@ function workspaceRow(w, e) {
         return Text(crumb).font(sidebarFont(11)).color("tertiary").lineLimit(1).paddingTrailing(4);
       }),
       ...(SETTINGS.projectGroups ? [
-        // 用原生符号区分 AI 与普通终端，不加载外部图片。
-        Image(memo(() => projectAgentSymbol(w())))
-          .font(sidebarFont(11)).color("secondary").frame({ width: 18 }).paddingTrailing(4),
         projectConversation(w).color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
       ] : [
         Text(memo(() => displayTitle(w())))
