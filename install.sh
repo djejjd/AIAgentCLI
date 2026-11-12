@@ -5,7 +5,7 @@
 #
 # Options (after `sh -s --` when piped):
 #   --version <tag>   install a specific release, e.g. v0.1.0-beta (default: latest)
-#   --dev             symlink this clone's src/aia-projects.js instead (edits hot-reload)
+#   --dev             install a generated sidebar from this clone
 #   --uninstall       remove the installed sidebar file
 #
 # Run it from a cmux terminal: cmux only accepts CLI commands from processes it started.
@@ -62,11 +62,19 @@ set_aside_foreign() {
 }
 
 if [ "$mode" = "dev" ]; then
-  src="$(cd "$(dirname "$0")" && pwd)/src/$name.js"
+  root="$(cd "$(dirname "$0")" && pwd)"
+  src="$root/src/$name.js"
   [ -f "$src" ] || { echo "--dev must run from a clone: $src not found" >&2; exit 1; }
+  command -v node >/dev/null 2>&1 || { echo "Node.js is required for --dev" >&2; exit 1; }
   set_aside_foreign
-  ln -sfn "$src" "$dest"
-  echo "Linked $dest -> $src"
+  if ! node "$root/scripts/model-map.js" --source "$src" --output "$dest"; then
+    if [ -n "$backup" ] && [ -f "$backup" ] && [ ! -e "$dest" ]; then
+      mv "$backup" "$dest"
+      echo "Restored $dest." >&2
+    fi
+    exit 1
+  fi
+  echo "Generated $dest from $src"
 else
   if [ "$version" = "latest" ]; then
     url="https://github.com/$repo/releases/latest/download/$name.js"
