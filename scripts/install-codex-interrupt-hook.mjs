@@ -34,16 +34,20 @@ export function mergeInterruptHook(config, command) {
 
 const wrapperSource = () => `#!/bin/sh
 # aia-projects-codex-interrupt
+normalize_payload() {
+  sed -e 's/"hook_event_name"[[:space:]]*:[[:space:]]*"Interrupt"/"hook_event_name":"Stop"/g' \
+      -e 's/"hookEventName"[[:space:]]*:[[:space:]]*"Interrupt"/"hookEventName":"Stop"/g'
+}
 cmux_cli="\${CMUX_CODEX_HOOK_CMUX_BIN:-\${CMUX_BUNDLED_CLI_PATH:-}}"
 if [ -z "$cmux_cli" ] || [ ! -x "$cmux_cli" ]; then
   cmux_cli="/Applications/cmux.app/Contents/Resources/bin/cmux"
 fi
 if [ -n "\${CMUX_SURFACE_ID:-}" ] && [ "\${CMUX_CODEX_HOOKS_DISABLED:-}" != "1" ] && [ -x "$cmux_cli" ]; then
   if [ -n "\${CMUX_SOCKET_PATH:-}" ]; then
-    CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 "$cmux_cli" --socket "$CMUX_SOCKET_PATH" hooks enqueue codex stop \
+    normalize_payload | CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 "$cmux_cli" --socket "$CMUX_SOCKET_PATH" hooks enqueue codex stop \
       || { cat >/dev/null 2>/dev/null || true; echo '{}'; }
   else
-    CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 "$cmux_cli" hooks enqueue codex stop \
+    normalize_payload | CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.5 "$cmux_cli" hooks enqueue codex stop \
       || { cat >/dev/null 2>/dev/null || true; echo '{}'; }
   fi
 else
@@ -98,5 +102,7 @@ if (invokedDirectly) {
   const state = result.changed ? "installed" : "already installed";
   console.log(`Codex Interrupt hook ${state}: ${result.hooksPath}`);
   if (result.backupPath) console.log(`Backup: ${result.backupPath}`);
-  console.log("Start a new Codex session and review/trust the new hook when prompted.");
+  if (result.changed) {
+    console.log("Start a new Codex session and review/trust the new hook when prompted.");
+  }
 }

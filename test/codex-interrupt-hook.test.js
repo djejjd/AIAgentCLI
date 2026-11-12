@@ -89,7 +89,7 @@ test("wrapper forwards Interrupt to cmux as a codex stop event", () => {
     '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_ARGS"\ncat > "$CAPTURE_STDIN"\n');
   fs.chmodSync(fakeCmux, 0o755);
 
-  const payload = '{"hook_event_name":"Interrupt"}\n';
+  const payload = '{"hook_event_name":"Interrupt","session_id":"abc"}\n';
   const result = spawnSync(installed.wrapperPath, {
     input: payload,
     encoding: "utf8",
@@ -105,7 +105,8 @@ test("wrapper forwards Interrupt to cmux as a codex stop event", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.readFileSync(argsPath, "utf8"), "hooks\nenqueue\ncodex\nstop\n");
-  assert.equal(fs.readFileSync(stdinPath, "utf8"), payload);
+  assert.equal(fs.readFileSync(stdinPath, "utf8"),
+    '{"hook_event_name":"Stop","session_id":"abc"}\n');
 });
 
 test("wrapper stays inert outside cmux", () => {
