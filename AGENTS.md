@@ -20,6 +20,8 @@ cmux 当前使用的侧栏只能指向稳定 main 热更新目录：
 - 功能开发和缺陷修复在其他独立分支或 worktree 中进行，不得把活动侧栏链接直接指向开发分支。
 - 禁止为每个功能、修复或实验创建单独的 `aia-projects-*.js` 热更新文件。
 - 功能分支合并到 `main` 后，统一同步同一个稳定目录并重新校验，不新增热更新版本。
+- PR 合并完成后必须立即发布正式热更新；不得等到用户再次提醒或让 `main` 与活动侧栏长期不一致。
+- 正式热更新发布完成后必须切回并选中 `aia-projects`，确认活动文件内容与最新 `origin/main` 一致。
 
 同步命令：
 
@@ -29,6 +31,18 @@ git -C /Users/lanser/Code/AIAgentCLI-main-hot checkout --detach origin/main
 cmux sidebar validate aia-projects
 cmux reload-config
 ```
+
+发布完成证据：
+
+```sh
+git -C /Users/lanser/Code/AIAgentCLI-main-hot rev-parse HEAD
+git -C /Users/lanser/Code/AIAgentCLI-main-hot rev-parse origin/main
+readlink ~/.config/cmux/sidebars/aia-projects.js
+cmux sidebar validate aia-projects
+```
+
+前两个 commit 必须一致，活动链接必须指向
+`/Users/lanser/Code/AIAgentCLI-main-hot/src/aia-projects.js`。校验失败时保留上一份可用热更新并报告失败，不得让未验证版本继续作为正式侧栏。
 
 ## 临时验证
 
