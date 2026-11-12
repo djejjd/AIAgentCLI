@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the aia-projects custom sidebar into cmux.
 #
-#   curl -fsSL https://github.com/djejjd/cmux-sidebar/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/djejjd/AIAgentCLI/releases/latest/download/install.sh | sh
 #
 # Options (after `sh -s --` when piped):
 #   --version <tag>   install a specific release, e.g. v0.1.0-beta (default: latest)
@@ -11,7 +11,7 @@
 # Run it from a cmux terminal: cmux only accepts CLI commands from processes it started.
 set -eu
 
-repo="djejjd/cmux-sidebar"
+repo="djejjd/AIAgentCLI"
 name="aia-projects"
 dir="$HOME/.config/cmux/sidebars"
 dest="$dir/$name.js"

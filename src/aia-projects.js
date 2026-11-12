@@ -1,5 +1,5 @@
 // aia-projects: cmux 项目式侧栏，按本机目录组织工作区并保留完整会话列表。
-// Fork: https://github.com/djejjd/cmux-sidebar
+// Fork: https://github.com/djejjd/AIAgentCLI
 // Upstream: https://github.com/s4ff0x/cmux-sidebar
 // Based on cmux Examples/CustomSidebars/workspaces.js, Copyright Manaflow, Inc.
 // SPDX-License-Identifier: GPL-3.0-or-later
