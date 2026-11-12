@@ -1,38 +1,37 @@
-# cmux-sidebar
+<!--
+状态: active
+创建: 2026-10-01
+最后更新: 2026-11-12
+关联: src/aia-projects.js; https://github.com/s4ff0x/cmux-sidebar
+-->
 
-A custom left sidebar for [cmux](https://cmux.com) that turns its flat workspace groups into a
-nested tree and shows which coding agents are working and which are done.
+# cmux-aia-projects
 
-![cmux-sidebar: nested groups, orange and green agent dots, a collapsed group that still lists its active workspaces](docs/demo.gif)
+基于 [s4ff0x/cmux-sidebar](https://github.com/s4ff0x/cmux-sidebar) 的 cmux 项目式侧栏。它按本机工作目录自动建立项目分组，同时保留工作区、终端和 Agent 会话的完整列表。
 
-- **Nested groups.** Name a group `Work/Backend/API` and it shows as a tree you can fold.
-- **Agent dots.** Orange while an agent works; green when it finished while you were in another
-  workspace, until you open it.
-- **Folding keeps active work visible.** A collapsed group still lists its working and finished
-  workspaces.
-- **Active and Favorites filters**, title colors, multi-select with bulk close, drag and drop.
+这是从上游 fork 出来的独立仓库，但仍属于相同 GPL 代码谱系。上游基础来自 cmux 官方
+[`Examples/CustomSidebars/workspaces.js`](https://github.com/manaflow-ai/cmux/blob/main/Examples/CustomSidebars/workspaces.js)。
 
-Paste this into a **cmux terminal** to install:
+![cmux-aia-projects: nested project groups, agent activity dots, and the complete workspace list](docs/demo.gif)
+
+- **按目录自动归组。** 同一路径下的工作区归入一个项目，使用宿主持久化分组。
+- **保留完整会话。** Active 只控制项目展开和收起，不隐藏终端、闲置对话或已结束会话。
+- **Agent 状态。** 橙色表示正在运行；绿色表示你离开后完成了回合，打开后被清除。
+- **原生分组和拖拽。** 保留上游的嵌套分组、拖拽排序、批量关闭和标题颜色能力。
+
+当前开发版从 clone 安装：
 
 ```sh
-curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh
+git clone https://github.com/djejjd/cmux-sidebar.git
+cd cmux-sidebar
+./install.sh --dev
 ```
 
-Tested with Claude Code and omp; other agents that cmux hooks into should work too
-([details](#supported-agents)). Needs cmux 0.64.25 or newer.
+需要 cmux 0.64.25 或更高版本。开发和问题反馈请使用
+[djejjd/cmux-sidebar](https://github.com/djejjd/cmux-sidebar/issues)。
 
-> **Beta.** Used daily, but expect rough edges. Please
-> [open an issue](https://github.com/s4ff0x/cmux-sidebar/issues) with your cmux version
-> (`cmux --version`) when something looks wrong.
-
-It runs on the cmux JS custom-sidebar runtime (one file in `~/.config/cmux/sidebars/`) and is a
-fork of the upstream
-[`Examples/CustomSidebars/workspaces.js`](https://github.com/manaflow-ai/cmux/blob/main/Examples/CustomSidebars/workspaces.js).
-It keeps that example's behavior: select on click, inline rename (double-click), close, unread
-badge, multi-select (⌘-click / ⇧-click), Close Others, and drag-and-drop.
-
-Why I built it and how the performance work went:
-[mendelson.dev/work/cmux-sidebar](https://mendelson.dev/work/cmux-sidebar/).
+本项目运行在 cmux 的自定义侧栏运行时中，入口是 `src/aia-projects.js`。上游性能和实现背景见
+[mendelson.dev/work/cmux-sidebar](https://mendelson.dev/work/cmux-sidebar/)。
 
 ## Features
 
@@ -59,7 +58,7 @@ Why I built it and how the performance work went:
   clock. It survives a sidebar mount in most cases (see the limits below). The sidebar tracks
   finishes while the clock is off, so turning it on shows the clocks of the last hour at once.
 - **Settings.** Set them in the `SETTINGS` block at the top of
-  `~/.config/cmux/sidebars/cmux-sidebar.js`: `recentClock: true` turns on the recently finished
+  `~/.config/cmux/sidebars/aia-projects.js`: `recentClock: true` turns on the recently finished
   clock. An update replaces that file, so set them again after updating. The Settings page is
   hidden for now: `settingsPage: true` shows a gear at the right of the top bar that opens it in
   place of the list, with the recently finished clock toggle. The cmux sidebar runtime has no
@@ -68,21 +67,14 @@ Why I built it and how the performance work went:
 - **Sidebar Guide.** The `?` at the right of the top bar, or **Sidebar Guide** at the end of any
   right-click menu, shows a short guide to every icon, the top bar and the mouse, in place of the
   list. Click the guide (or the `?`) to close it.
-- **Filters.** Two toggle chips sit at the top of the sidebar:
-  - **Active · N** shows only workspaces with an orange or green dot.
-  - **Favorites · N** shows only favorite workspaces.
-
-  Filters work on the tree in place. Workspace rows that don't match are hidden, but every
-  group header stays, with its collapse state, `+` button, and menu, so you can keep creating
-  workspaces. With both chips on, a workspace shows if it matches either. The open workspace
-  always shows: one you just created or opened stays until you open another, then hides if it
-  doesn't match. If no row matches, a dim message under the headers says so. Filter state is
-  local and resets when the sidebar mounts.
+- **Active folding.** **Active · N** expands every project containing an active workspace.
+  Turning Active off folds those same projects again. It never filters individual workspace
+  rows, so terminals and idle conversations remain in the group.
 - **New workspaces open at once.** A group's `+` (or **New Workspace in Group**) and a
   double-click on the empty area open the new workspace as soon as cmux creates it.
-- **Favorites.** Right-click a workspace → **Favorite** / **Unfavorite**. A favorite shows a red
-  bookmark before its title. A favorite is the native cmux pin, so it persists, the built-in
-  sidebar shows it as pinned, and cmux keeps it at the top of the tab order.
+- **Favorites.** The upstream Favorite / Favorites controls are retained in code but hidden by
+  default in this fork. Set `showFavoritesFilter` or `showFavoriteAction` to `true` in
+  `SETTINGS` to restore them.
 - **Title color.** Right-click a workspace → **Title Color** draws its title in Red, Orange,
   Yellow, Green, Teal, Blue, Purple, or Pink; **None** clears it. With a multi-selection, every
   selected row takes the color. The title color is the native cmux workspace color, so it
@@ -125,32 +117,29 @@ Why I built it and how the performance work went:
 
 ## Install
 
-Paste this into a **cmux terminal**:
+从当前开发分支安装：
 
 ```sh
-curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh
+git clone https://github.com/djejjd/cmux-sidebar.git
+cd cmux-sidebar
+./install.sh --dev
 ```
 
-This downloads the latest release into `~/.config/cmux/sidebars/cmux-sidebar.js`, validates it,
-and switches the left sidebar to it. Run it from a cmux terminal: by default cmux accepts CLI
-commands only from processes it started. From any other terminal the file is still installed;
-then right-click the sidebar button in cmux and pick **cmux-sidebar**.
+`--dev` 会把 `src/aia-projects.js` 链接到
+`~/.config/cmux/sidebars/aia-projects.js`，源代码保存后会热重载。它不会覆盖已有的
+`cmux-sidebar.js`。
 
 Requirements: cmux 0.64.25 or newer (tested on 0.64.25, 0.65.1 and 0.65.2), with Custom Sidebars enabled
 (the default; **Settings → Custom Sidebars**).
 
-- **Update:** run the same command again.
-- **Pin a version:** `curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh -s -- --version v0.1.0-beta`
-  ([releases](https://github.com/s4ff0x/cmux-sidebar/releases)).
-- **Uninstall:** `curl -fsSL https://github.com/s4ff0x/cmux-sidebar/releases/latest/download/install.sh | sh -s -- --uninstall`,
-  then pick another sidebar from the sidebar button's right-click menu.
-- **Without the script:** download `cmux-sidebar.js` from a
-  [release](https://github.com/s4ff0x/cmux-sidebar/releases), put it in
-  `~/.config/cmux/sidebars/`, and pick it from the sidebar button's right-click menu.
+- **Update:** pull the branch and rerun `./install.sh --dev`.
+- **Uninstall:** run `./install.sh --uninstall`, then pick another sidebar from cmux.
+- **Without the script:** copy `src/aia-projects.js` to
+  `~/.config/cmux/sidebars/aia-projects.js`, then pick `aia-projects` from the sidebar menu.
 
-If a file named `cmux-sidebar.js` that this installer did not write is already there, it is moved
-to a timestamped `.bak` first. If the new file fails `cmux sidebar validate`, the previous one is
-put back.
+If a file named `aia-projects.js` that this installer did not write is already there, it is
+moved to a timestamped `.bak` first. If the new file fails `cmux sidebar validate`, the previous
+one is put back.
 
 ## Supported agents
 
@@ -236,12 +225,12 @@ the separator:
 ## Development
 
 ```sh
-git clone https://github.com/s4ff0x/cmux-sidebar.git
+git clone https://github.com/djejjd/cmux-sidebar.git
 cd cmux-sidebar
-./install.sh --dev   # symlinks src/cmux-sidebar.js into cmux, so saves hot-reload
+./install.sh --dev   # symlinks src/aia-projects.js into cmux, so saves hot-reload
 npm test            # node:test suite, run against cmux's real SidebarRuntime.js
 npm run check       # syntax check
-cmux sidebar validate cmux-sidebar
+cmux sidebar validate aia-projects
 ```
 
 The tests load the runtime from the installed app
@@ -253,9 +242,8 @@ The tests load the runtime from the installed app
 1. On a Mac with cmux installed, run `npm test` on the commit you want to release (CI cannot:
    the tests need the app's runtime).
 2. Tag it and push the tag: `git tag v0.2.0 && git push origin v0.2.0`.
-3. `.github/workflows/release.yml` publishes a GitHub Release with `cmux-sidebar.js` and
-   `install.sh` attached. The install command always fetches the newest release, so do not
-   mark a release as a pre-release unless users should skip it.
+3. Publish `aia-projects.js` and `install.sh` as release assets. This fork has not created its
+   first release yet, so use `./install.sh --dev` during development.
 
 ### Performance
 
