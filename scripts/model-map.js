@@ -93,9 +93,10 @@ function argument(name, fallback) {
 }
 
 function main() {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const sourcePath = argument(
     "--source",
-    "/Users/lanser/Code/AIAgentCLI-main-hot/src/aia-projects.js",
+    path.join(repoRoot, "src/aia-projects.js"),
   );
   const outputPath = argument(
     "--output",
