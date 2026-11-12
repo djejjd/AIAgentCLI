@@ -183,6 +183,11 @@ export function mountSidebar(state, settings = {}, options = {}) {
         if (!found) throw new Error(`no text "${text}"`);
         return found.props.color;
       },
+      fontSize(text) {
+        const found = findDeep(n.id, (x) => x.type === "text" && x.props.text === text, { skipHidden: true })[0];
+        if (!found) throw new Error(`no text "${text}"`);
+        return found.props.font;
+      },
       highlighted: !!n.props.background,
       background: n.props.background ?? null,
       texts: visibleTexts,
@@ -277,6 +282,10 @@ export function mountSidebar(state, settings = {}, options = {}) {
     return {
       text: textsOf(found).join(" "),
       on: !!found.props.background,
+      fontSize() {
+        const text = findDeep(found.id, (n) => n.type === "text", { skipHidden: true })[0];
+        return text?.props.font;
+      },
       tap() {
         dispatch(found.id, "tap", {});
       },
