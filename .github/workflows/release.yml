@@ -1,32 +1,38 @@
-# Pushing a v* tag publishes a GitHub Release whose assets are what users
-# install: the sidebar file and the installer. `releases/latest/download/...`
-# always points at the newest non-prerelease release.
-#
-# The test suite needs cmux's SidebarRuntime.js from the macOS app, so it runs
-# locally before tagging (see README, Releasing); CI only checks syntax.
+# 正式版本只发布公开构建；个人厂商映射在安装端生成。
 name: release
-
 on:
   push:
     tags: ["v*"]
-
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --check src/cmux-sidebar.js && sh -n install.sh
+      - name: Verify public artifact and release version
+        run: |
+          npm run check
+          sh -n install.sh
+          node --test test/conversations.test.js test/local-metadata.test.js test/session-metadata.test.js test/model-map.test.js test/release-packaging.test.js
+          node -e 'const p=require("./package.json"); if(process.env.GITHUB_REF_NAME!=="v"+p.version) process.exit(1)'
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main
+      - name: Prepare release assets
+        run: |
+          mkdir release-assets
+          cp src/aia-projects.js install.sh scripts/model-map.js scripts/local-metadata.mjs scripts/install-runtime.mjs release-assets/
+          cd release-assets
+          sha256sum aia-projects.js install.sh model-map.js local-metadata.mjs install-runtime.mjs > SHA256SUMS
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            src/cmux-sidebar.js install.sh \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "$GITHUB_REF_NAME 热更新修复" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md" --latest

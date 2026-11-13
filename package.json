@@ -4,9 +4,11 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "check": "node --check src/cmux-sidebar.js && node --check src/aia-projects.js && node --check scripts/install-codex-interrupt-hook.mjs && node --check scripts/model-map.js && node --check test/harness.js",
+    "check": "node --check src/cmux-sidebar.js && node --check src/aia-projects.js && node --check scripts/install-codex-interrupt-hook.mjs && node --check scripts/model-map.js && node --check test/harness.js && node --check src/project-sidebar.js && node --check src/conversations.js && node --check scripts/local-metadata.mjs && node --check scripts/install-runtime.mjs && node scripts/build.mjs --check",
     "install-codex-interrupt-hook": "node scripts/install-codex-interrupt-hook.mjs",
     "models": "node scripts/model-map.js",
-    "test": "node --test test/*.test.js"
-  }
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build.mjs"
+  },
+  "version": "0.8.0"
 }

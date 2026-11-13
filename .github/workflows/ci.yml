@@ -1,0 +1,19 @@
+# 原生侧栏运行时回归在本机完整执行；CI 验证公开产物和可移植回归。
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check
+      - run: sh -n install.sh
+      - run: node --test test/conversations.test.js test/local-metadata.test.js test/session-metadata.test.js test/model-map.test.js test/release-packaging.test.js test/codex-interrupt-hook.test.js

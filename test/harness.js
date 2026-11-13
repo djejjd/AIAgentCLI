@@ -192,10 +192,41 @@ export function mountSidebar(state, settings = {}, options = {}) {
         if (!found) throw new Error(`no text "${text}"`);
         return found.props.font;
       },
+      // 从真实场景树读取文字和图标样式，验证项目与对话的视觉层级。
+      textStyle(text) {
+        const found = findDeep(n.id, (x) => x.type === "text" && x.props.text === text, { skipHidden: true })[0];
+        if (!found) throw new Error(`no text "${text}"`);
+        return found.props;
+      },
+      imageStyle(systemName) {
+        const found = findDeep(n.id, (x) => x.type === "image" && x.props.systemName === systemName, { skipHidden: true })[0];
+        if (!found) throw new Error(`no image "${systemName}"`);
+        return found.props;
+      },
+      textParents(text) {
+        const path = [];
+        const walk = (id) => {
+          const current = node(id);
+          if (!current) return false;
+          if (current.type === "text" && current.props.text === text) return true;
+          for (const child of current.children) {
+            if (walk(child)) { path.push(current.type); return true; }
+          }
+          return false;
+        };
+        walk(n.id);
+        return path;
+      },
+      shapeStyle(type) {
+        return findDeep(n.id, (x) => x.type === type, { skipHidden: true })[0]?.props;
+      },
       highlighted: !!n.props.background,
       background: n.props.background ?? null,
       texts: visibleTexts,
       text: visibleTexts.join(" "),
+      // 检查真实场景节点中的图标，不依赖生产代码内部函数。
+      imageNames: findDeep(n.id, (x) => x.type === "image", { skipHidden: true })
+        .map((x) => x.props.systemName),
       indent: n.props.marginLeading ?? 0,
       editing: field ? field.props.text : null,
       // The activity dot: orange = working, green = finished and not yet
