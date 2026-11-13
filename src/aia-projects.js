@@ -98,6 +98,111 @@ function createProjectReconciler(send) {
   };
 }
 
+// 会话厂商、稳定身份编号与显式启动预设；不读取或展示历史输入。
+const CONVERSATION_PROVIDERS = {
+  openai: { name: 'OpenAI', icon: 'sparkles' },
+  anthropic: { name: 'Anthropic', icon: 'sun.max' },
+  deepseek: { name: 'DeepSeek', icon: 'water.waves' },
+  google: { name: 'Google', icon: 'diamond' },
+  xai: { name: 'xAI', icon: 'bolt' },
+  alibaba: { name: 'Alibaba', icon: 'cloud' },
+  moonshot: { name: 'Moonshot', icon: 'moon.stars' },
+  unknown: { name: '未知厂商', icon: 'questionmark.circle' },
+};
+
+// 只识别模型家族；路由商或客户端名称不等于模型厂商。
+function providerForModel(model) {
+  const value = String(model || '').toLowerCase().split('/').at(-1);
+  if (/^deepseek/.test(value)) return 'deepseek';
+  if (/^(gpt|o[134](?:[-.]|$)|chatgpt)/.test(value)) return 'openai';
+  if (/^claude/.test(value)) return 'anthropic';
+  if (/^gemini/.test(value)) return 'google';
+  if (/^grok/.test(value)) return 'xai';
+  if (/^(qwen|tongyi)/.test(value)) return 'alibaba';
+  if (/^(kimi|moonshot)/.test(value)) return 'moonshot';
+  return 'unknown';
+}
+
+// 输入为代理元数据与本机映射；输出仅含厂商显示信息，不携带型号。
+function conversationProvider(agent, mappings = {}) {
+  const mapped = mappings[agent?.id] ?? {};
+  const liveModel = agent?.model || agent?.modelId;
+  const liveProvider = CONVERSATION_PROVIDERS[agent?.provider] ? agent.provider : '';
+  const key = liveModel ? (providerForModel(liveModel) !== 'unknown' ? providerForModel(liveModel) : liveProvider) : liveProvider
+    || (CONVERSATION_PROVIDERS[mapped.provider] ? mapped.provider : providerForModel(mapped.model));
+  return CONVERSATION_PROVIDERS[key] || CONVERSATION_PROVIDERS.unknown;
+}
+
+// 身份短编号取 UUID 尾部六位，不依赖顺序或内存计数；并非全局唯一标识。
+function conversationNumber(id) {
+  const value = String(id || '').replace(/-/g, '');
+  return value.slice(-6).toUpperCase();
+}
+
+// 原生标题保存默认预设厂商或“自定义名 · 厂商”，无需额外存储或读取历史输入。
+function conversationTitleInfo(title) {
+  const value = String(title || '');
+  for (const [key, provider] of Object.entries(CONVERSATION_PROVIDERS)) {
+    if (new RegExp('^' + provider.name + ' · [0-9]+-[0-9]+$').test(value)) {
+      return { provider: key, alias: '' };
+    }
+    const suffix = ' · ' + provider.name;
+    if (value.endsWith(suffix)) return { provider: key, alias: value.slice(0, -suffix.length) };
+  }
+  return null;
+}
+
+// 预设只允许已知可执行名及安全模型 ID；不接收任意 shell 命令或附加权限参数。
+function presetCommand(preset) {
+  if (!preset || !['codex', 'claude', 'opencode'].includes(preset.tool)) return null;
+  if (preset.model && !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,119}$/.test(preset.model)) return null;
+  const args = [preset.tool, ...(preset.model ? [preset.tool === 'claude' ? '--model' : '-m', preset.model] : [])];
+  return args.map((arg) => "'" + arg + "'").join(' ');
+}
+
+// 为新建请求选择唯一的本机项目目录；不启动远程或目录不确定的工作区。
+function launchDirectory(groupId, ws) {
+  const members = ws.filter((w) => w.group === groupId);
+  const directory = members[0]?.directory;
+  return members.length && String(directory || '').startsWith('/')
+    && members.every((w) => !w.remote?.target && w.directory === directory) ? directory : '';
+}
+
+// 只持有一个显式创建请求；宿主时钟驱动超时，所有终态释放引用，绝不自动重发。
+function createConversationLauncher(send) {
+  let request = null;
+  let report = { state: 'idle', failure: '' };
+  let serial = 0;
+  const fail = (failure) => { request = null; return report = { state: 'failed', failure }; };
+  return {
+    pending: () => !!request,
+    start(groupId, preset, ws, now) {
+      if (request) return false;
+      const command = presetCommand(preset);
+      const cwd = launchDirectory(groupId, ws);
+      if (!command || !cwd) { fail('启动配置不可用'); return false; }
+      const provider = CONVERSATION_PROVIDERS[providerForModel(preset.model)];
+      const title = (provider?.name || preset.tool) + ' · ' + now + '-' + (++serial);
+      request = { groupId, tool: preset.tool, title, started: now, known: new Set(ws.map((w) => w.id)) };
+      report = { state: 'creating', failure: '' };
+      try { send('workspace.create', { group_id: groupId, cwd, initial_input: command + '\r', title, focus: 'true' }); }
+      catch { fail('发送创建请求'); return false; }
+      return true;
+    },
+    tick(ws, groupIds, now) {
+      if (!request) return report;
+      if (!groupIds.includes(request.groupId)) return fail('项目已移除');
+      const created = ws.find((w) => !request.known.has(w.id) && w.title === request.title
+        && w.group === request.groupId);
+      if (created) {
+        request = null;
+        return report = { state: 'idle', failure: '' };
+      }
+      return now - request.started >= 15 ? fail('创建对话') : report;
+    },
+  };
+}
+
 // cmux-sidebar: nested workspace groups, working/finished agent dots, an
 // optional recently-finished clock, title colors and important (red)
 // workspaces, collapse that keeps active work visible, and Active/Favorites
@@ -136,13 +241,21 @@ const SETTINGS = {
   // 左侧项目栏字体整体放大；原生侧栏最小宽度由 cmux 的
   // sidebarMinimumWidth 设置单独控制，不在这里改变。
   fontScale: 1.15,
-  // 测试或手工覆盖使用；正式热更新会注入 GENERATED_MODEL_MAP。
+  // 测试或手工覆盖使用；正式热更新会注入 LOCAL_CONVERSATION_METADATA。
   modelMap: {},
 };
 
 // 左侧栏字号统一从基础值缩放，并向上对齐到 0.5 磅，避免行高出现零碎值。
 const sidebarFont = (size) => Math.ceil(size * SETTINGS.fontScale * 2) / 2;
-const GENERATED_MODEL_MAP = {};
+// 本机元数据由预览构建注入；不提交会话 ID、名称或恢复命令。
+const LOCAL_CONVERSATION_METADATA = { providers: {}, names: {} };
+const STARTUP_PRESETS = [
+  { id: 'sol', label: 'Codex · Sol', tool: 'codex', model: 'gpt-6.1-sol' },
+  { id: 'astra', label: 'Codex · Astra', tool: 'codex', model: 'gpt-6-astra' },
+  { id: 'luna', label: 'Codex · Luna', tool: 'codex', model: 'gpt-6-luna' },
+  { id: 'claude', label: 'Claude · 默认配置', tool: 'claude' },
+  { id: 'deepseek', label: 'OpenCode · DeepSeek Flash', tool: 'opencode', model: 'opencode/deepseek-v4-flash-free' },
+];
 
 // --- change-only data ------------------------------------------------------------
 // The runtime never dedupes: a binding re-runs and re-sends its prop whenever
@@ -731,6 +844,37 @@ function displayTitle(w) {
   return agentTitle(w) ?? w.title;
 }
 
+// 只展示显式自定义名；不把自动生成的标题或最近输入当作会话名。
+const conversationNames = new Map();
+const knownCustomNames = new Set(Object.keys(LOCAL_CONVERSATION_METADATA.names));
+function conversationAlias(w) {
+  titleTick();
+  if (!w) return '';
+  const explicit = w.customTitle ?? w.custom_title;
+  const pending = conversationNames.get(w.id);
+  if (pending) {
+    if (w.title === pending.title || explicit === pending.name || w.title !== pending.previous) {
+      conversationNames.delete(w.id);
+    } else return pending.name;
+  }
+  if (explicit !== undefined) return conversationTitleInfo(explicit)?.alias ?? explicit;
+  const saved = conversationTitleInfo(w.title);
+  if (saved) { knownCustomNames.add(w.id); return saved.alias; }
+  const cached = LOCAL_CONVERSATION_METADATA.names[w.id];
+  if (cached && w.title === cached) return cached;
+  const focused = (w.tabs || []).find((tab) => tab.focused);
+  return knownCustomNames.has(w.id) && focused?.title && focused.title !== w.title ? w.title : '';
+}
+
+// 实时元数据优先；无运行元数据时可使用显式启动预设保存在原生标题中的厂商。
+function projectProvider(w) {
+  const agent = projectAgent(w || {});
+  const provider = conversationProvider(agent, { ...LOCAL_CONVERSATION_METADATA.providers, ...SETTINGS.modelMap });
+  if (provider.name !== '未知厂商' || agent?.model || agent?.modelId) return provider;
+  const saved = conversationTitleInfo(w?.title);
+  return saved ? CONVERSATION_PROVIDERS[saved.provider] : provider;
+}
+
 // 根据当前聚焦终端选择代理，避免多分屏的名称与摘要错配。
 function projectAgent(w) {
   const records = liveAgents(w ?? {});
@@ -738,12 +882,6 @@ function projectAgent(w) {
   const agents = active.length ? active : records;
   const focused = agents.find((a) => agentTab(w, a)?.focused);
   return focused ?? agents.sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0];
-}
-
-// 单行摘要限额；不读取或记录会话正文，不为缺失数据生成摘要。
-function compactSummary(text) {
-  const value = String(text ?? "").replace(/\s+/g, " ").trim();
-  return value.length > 88 ? value.slice(0, 88) + "…" : value;
 }
 
 const PROJECT_STATES = {
@@ -766,71 +904,10 @@ function projectState(w) {
   return "ready";
 }
 
-const MODEL_ICONS = {
-  deepseek: "water.waves",
-  openai: "sparkles",
-  anthropic: "sun.max",
-  google: "diamond",
-  xai: "bolt",
-  alibaba: "cloud",
-  moonshot: "moon.stars",
-  unknown: "circle-help",
-};
-
-function providerForModel(model) {
-  const value = String(model || "").toLowerCase();
-  if (value.startsWith("deepseek")) return "deepseek";
-  if (/^(gpt|o[134]|chatgpt)/.test(value)) return "openai";
-  if (value.startsWith("claude")) return "anthropic";
-  if (value.startsWith("gemini")) return "google";
-  if (value.startsWith("grok")) return "xai";
-  if (/^(qwen|tongyi)/.test(value)) return "alibaba";
-  if (/^(kimi|moonshot)/.test(value)) return "moonshot";
-  return "unknown";
-}
-
-function displayModelName(model) {
-  const value = String(model || "").trim();
-  if (!value) return "未知模型";
-  const families = [
-    [/^deepseek[-_ ]?(.*)$/i, "DeepSeek"],
-    [/^gpt[-_ ]?(.*)$/i, "GPT"],
-    [/^claude[-_ ]?(.*)$/i, "Claude"],
-    [/^gemini[-_ ]?(.*)$/i, "Gemini"],
-    [/^grok[-_ ]?(.*)$/i, "Grok"],
-    [/^(?:qwen|tongyi)[-_ ]?(.*)$/i, "Qwen"],
-    [/^(?:kimi|moonshot)[-_ ]?(.*)$/i, "Kimi"],
-  ];
-  const title = (token) =>
-    /^\d/.test(token) ? token : token.charAt(0).toUpperCase() + token.slice(1);
-  for (const [pattern, family] of families) {
-    const match = value.match(pattern);
-    if (!match) continue;
-    const tokens = match[1].split(/[-_ ]+/).filter(Boolean).map(title);
-    const suffix = tokens.join(" ");
-    if (!suffix) return family;
-    return family === "GPT" && /^\d/.test(tokens[0]) ? `${family}-${suffix}` : `${family} ${suffix}`;
-  }
-  return value.split(/[-_ ]+/).filter(Boolean).map(title).join(" ");
-}
-
-function agentModel(a) {
-  const mapped = SETTINGS.modelMap?.[a?.id] ?? GENERATED_MODEL_MAP[a?.id] ?? null;
-  const model = mapped?.model || mapped?.modelId || "";
-  const provider = mapped?.provider || providerForModel(model);
-  return {
-    name: mapped?.name || displayModelName(model),
-    provider,
-    icon: MODEL_ICONS[provider] || MODEL_ICONS.unknown,
-  };
-}
-
-function agentProjectState(w, a) {
-  if (claimsWork(a) && !titleSaysWaiting(w, a)) {
-    minute();
-    return allStale([a], wallNow()) ? "ready" : "running";
-  }
-  return "ready";
+// 图标只代表已确认的厂商；空白终端保留终端符号。
+function projectAgentSymbol(w) {
+  const agent = projectAgent(w);
+  return agent || conversationTitleInfo(w?.title) ? projectProvider(w).icon : 'terminal';
 }
 
 // 分支来自整组真实工作区；不同分支不可冒充单一分支。
@@ -841,72 +918,34 @@ function projectBranch(nodeKey) {
   return branches.length > 1 ? "多分支" : branches[0] ?? "";
 }
 
-// 每个 Agent 会话各占一组两行信息；模型未知时统一使用问号图标。
+// 会话只展示厂商、显式名称/身份编号与状态；不读取历史输入或摘要。
 function projectConversation(w) {
-  const agents = memoJSON(() => {
+  const agent = memoJSON(() => projectAgent(w()));
+  const label = memo(() => {
     const workspace = w();
-    const records = liveAgents(workspace ?? {});
-    const active = records.filter((agent) => agent.status !== "ended");
-    const shown = active.length ? active : records;
-    if (!shown.length) {
-      const state = PROJECT_STATES[projectState(workspace)] ?? PROJECT_STATES.ready;
-      return [{
-        key: "workspace",
-        icon: "terminal",
-        label: displayTitle(workspace),
-        agentName: "",
-        summary: "",
-        status: state,
-      }];
-    }
-    return shown
-      .slice()
-      .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))
-      .map((agent) => {
-        const model = agentModel(agent);
-        const state = PROJECT_STATES[agentProjectState(workspace, agent)] ?? PROJECT_STATES.ready;
-        return {
-          key: agent.id,
-          icon: model.icon,
-          label: model.name,
-          agentName: agent.name || agent.kind || "",
-          summary: compactSummary(workspace?.description || agentTab(workspace, agent)?.latestPrompt
-            || workspace?.latestPrompt || agent.title || ""),
-          status: state,
-        };
-      });
+    if (!workspace) return "";
+    const alias = conversationAlias(workspace);
+    if (!agent() && !conversationTitleInfo(workspace.title)) return alias || displayTitle(workspace);
+    const provider = projectProvider(workspace).name;
+    const name = alias ? alias + ' · ' + provider : provider + ' · ' + conversationNumber(workspace.id);
+    const count = liveAgents(workspace).filter((a) => a.status !== 'ended').length;
+    return name + (count > 1 ? ' +' + (count - 1) : '');
   });
-  return VStack({ alignment: "leading", spacing: 5 }, [
-    ForEach({ items: agents, key: (agent) => agent.key }, (agent) => {
-      const status = memo(() => agent().status);
-      const marker = memoJSON(() => status().shape ? [status().shape] : []);
-      return VStack({ alignment: "leading", spacing: 2 }, [
-        HStack({ spacing: 6 }, [
-          Image(memo(() => agent().icon)).font(sidebarFont(11))
-            .color("secondary").frame({ width: 18 }).paddingTrailing(4),
-          Text(memo(() => agent().label)).font(sidebarFont(11))
-            .lineLimit(1).truncation("tail").layoutPriority(1),
-          ForEach({ items: marker, key: (k) => k }, (_, shape) => {
-            const color = memo(() => status().color);
-            const dot = shape === "circle"
-              ? Circle({ size: 7 }).fill(color)
-              : RoundedRectangle({ width: 7, height: 7, cornerRadius: 1.5 }).fill(color);
-            return dot.frame({ width: 10, height: 10 });
-          }),
-          Text(memo(() => status().label)).font(sidebarFont(10)).color(memo(() => status().color))
-            .lineLimit(1).layoutPriority(2),
-        ]),
-        HStack({ spacing: 4 }, [
-          Text(memo(() => agent().agentName)).font(sidebarFont(10))
-            .color("secondary").lineLimit(1).layoutPriority(1),
-          Text(memo(() => agent().agentName && agent().summary ? "·" : ""))
-            .font(sidebarFont(10)).color("tertiary"),
-          Text(memo(() => agent().summary)).font(sidebarFont(10))
-            .color("secondary").lineLimit(1).truncation("tail"),
-        ]).paddingLeading(28),
-      ]);
+  const status = memo(() => PROJECT_STATES[projectState(w())] ?? PROJECT_STATES.ready);
+  const marker = memoJSON(() => status().shape ? [status().shape] : []);
+  return HStack({ spacing: 5 }, [
+    Text(label).font(13).weight('semibold').lineLimit(1).truncation('tail').layoutPriority(1)
+      .help(memo(() => agent()?.name || agent()?.kind || (conversationTitleInfo(w()?.title)
+        ? '厂商来自启动预设或会话名称，实际模型见会话' : '终端'))),
+    ForEach({ items: marker, key: (k) => k }, (_, shape) => {
+      const color = memo(() => status().color);
+      const dot = shape === 'circle' ? Circle({ size: 5 }).fill(color)
+        : RoundedRectangle({ width: 5, height: 5, cornerRadius: 1 }).fill(color);
+      return HStack({ spacing: 0 }, [dot]).frame({ width: 8, height: 8 });
     }),
-  ]).frame({ maxWidth: "infinity", alignment: "leading" });
+    Text(memo(() => status().label)).font(10).color(memo(() => status().color))
+      .lineLimit(1).layoutPriority(2),
+  ]).frame({ maxWidth: 'infinity', alignment: 'leading' });
 }
 
 // --- inline rename -----------------------------------------------------------
@@ -1819,10 +1858,14 @@ function workspaceRow(w, e) {
   return ZStack({ alignment: "trailing" }, [
     // Its frame leads, so no trailing Spacer is needed to left-align it.
     HStack({ spacing: 0 }, [
+      // 固定选中标记槽位，切换对话时不移动正文。
+      ...(SETTINGS.projectGroups ? [Rectangle()
+        .fill(memo(() => selected() ? "#4C9EEB" : "#00000000"))
+        .frame({ width: 2, height: 20 }).paddingTrailing(4)] : []),
       ...(SETTINGS.projectGroups && e().depth > 0 ? [
         // 连线只表达项目归属，颜色沿用原侧栏的弱分隔色。
         ZStack({ alignment: "leading" }, [
-          Rectangle().fill("#7f7f7f55").frame({ width: 1, height: 38 }),
+          Rectangle().fill("#7f7f7f55").frame({ width: 1, height: 26 }),
           Rectangle().fill("#7f7f7f55").frame({ width: 9, height: 1 }),
         ]).frame({ width: 12 }).paddingTrailing(4),
       ] : []),
@@ -1835,9 +1878,12 @@ function workspaceRow(w, e) {
         // Red bookmark on favorites.
         if (k === "pin") return Image("bookmark.fill").font(10).color(FAVORITE_RED).frame({ width: 9 }).paddingTrailing(5);
         // Dim "B › C ›" path for a row shown away from its group.
-        return Text(crumb).font(sidebarFont(11)).color("tertiary").lineLimit(1).paddingTrailing(4);
+        return Text(crumb).font(13).color("tertiary").lineLimit(1).paddingTrailing(4);
       }),
       ...(SETTINGS.projectGroups ? [
+        // 用原生符号区分 AI 与普通终端，不加载外部图片。
+        Image(memo(() => projectAgentSymbol(w())))
+          .font(14).color("secondary").frame({ width: 20 }).paddingTrailing(6),
         projectConversation(w).color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
       ] : [
         Text(memo(() => displayTitle(w())))
@@ -1845,6 +1891,7 @@ function workspaceRow(w, e) {
           .color(memo(() => color() ?? (selected() ? "primary" : "secondary"))),
       ]),
     ])
+      .paddingTrailing(SETTINGS.projectGroups ? 22 : 0)
       .frame({ maxWidth: "infinity" }),
     ZStack({}, [
       // Unread badge at rest; on hover it yields to the close button.
@@ -1873,9 +1920,9 @@ function workspaceRow(w, e) {
     .paddingTrailing(10)
     .paddingVertical(6)
     .marginLeading(memo(() => e().depth * INDENT))
-    .cornerRadius(8)
-    .background(memo(() => (multi() ? "#4C9EEB33" : dropHere() ? DROP_ROW_TINT : selected() ? "#7f7f7f3d" : null)))
-    .hoverBackground(memo(() => (multi() ? "#4C9EEB33" : (selected() ? "#7f7f7f3d" : "#7f7f7f24"))))
+    .cornerRadius(SETTINGS.projectGroups ? 5 : 8)
+    .background(memo(() => (multi() ? "#4C9EEB33" : dropHere() ? DROP_ROW_TINT : selected() ? (SETTINGS.projectGroups ? "#4C9EEB26" : "#7f7f7f3d") : null)))
+    .hoverBackground(memo(() => (multi() ? "#4C9EEB33" : (selected() ? (SETTINGS.projectGroups ? "#4C9EEB26" : "#7f7f7f3d") : "#7f7f7f24"))))
     .frame({ maxWidth: "infinity" })
     .dragSet(memo(() => (multi() ? "multi" : null)))
     .onTap((payload) => handleRowClick(w(), payload))
@@ -1890,7 +1937,7 @@ function workspaceEditRow(w, e) {
   // is compared against it.
   let prefill;
   return HStack({ spacing: 8 }, [
-    TextField(memo(() => (prefill ??= displayTitle(w()))), {
+    TextField(memo(() => (prefill ??= SETTINGS.projectGroups ? conversationAlias(w()) : displayTitle(w()))), {
       placeholder: "Workspace name",
       onSubmit: (t) => {
         const title = (t ?? "").trim();
@@ -1900,10 +1947,14 @@ function workspaceEditRow(w, e) {
           setEditingId(null);
           return;
         }
+        const nativeTitle = SETTINGS.projectGroups && title && (projectAgent(w()) || conversationTitleInfo(w().title))
+          ? title + ' · ' + projectProvider(w()).name : title;
+        if (SETTINGS.projectGroups) conversationNames.set(w().id,
+          { name: title, title: nativeTitle, previous: w().title });
         if (title) {
-          titleOverride.set(w().id, title);
+          titleOverride.set(w().id, nativeTitle);
           setTitleTick(titleTick() + 1);
-          cmux("workspace.action", { action: "rename", workspace_id: w().id, title });
+          cmux("workspace.action", { action: "rename", workspace_id: w().id, title: nativeTitle });
         } else {
           titleOverride.delete(w().id); // a rename still in flight must not outlive the clear
           setTitleTick(titleTick() + 1);
@@ -1912,7 +1963,7 @@ function workspaceEditRow(w, e) {
         setEditingId(null);
       },
       onCancel: () => setEditingId(null),
-    }).font(sidebarFont(12)),
+    }).font(13),
   ])
     .paddingHorizontal(10)
     .paddingVertical(6)
@@ -1948,14 +1999,14 @@ function groupHeader(entry, e) {
     // rotation animates as one motion with the accordion, and the fixed box
     // keeps the header height constant.
     Image("chevron.right")
-      .font(sidebarFont(10)).weight("semibold").color("tertiary")
+      .font(10).weight("semibold").color("tertiary")
       .rotation(memo(() => (e().collapsed ? 0 : 90)))
       .frame({ width: 14, height: 16 })
       .onTap(toggle),
     // The anchor's own dot and clock overlay a leading inset that only opens
     // while they show. The host auto-boosts only a bare truncating Text over
     // sibling Spacers, so the wrapper needs the boost explicitly.
-    ...(SETTINGS.projectGroups ? [Image("folder").font(sidebarFont(12)).color("secondary")] : []),
+    ...(SETTINGS.projectGroups ? [Image("folder").font(12).color("secondary")] : []),
     ZStack({ alignment: "leading" }, [
       Text(memo(() => e().leaf)).font(sidebarFont(12)).weight("semibold").lineLimit(1).truncation("tail")
         .color(memo(() => (selected() ? "primary" : "secondary")))
@@ -1963,32 +2014,28 @@ function groupHeader(entry, e) {
       ForEach({ items: marks, key: (k) => k }, (_, k) =>
         (k === "dot" ? activityDot(state) : recentClock().paddingLeading(dotInset))),
     ]).layoutPriority(1),
+    ...(SETTINGS.projectGroups ? [
+      ForEach({ items: memoJSON(() => projectBranch(nodeKey) ? ["branch"] : []), key: (k) => k }, () =>
+        Text(memo(() => projectBranch(nodeKey))).font(10).color("secondary")
+          .help(memo(() => projectBranch(nodeKey))).lineLimit(1).truncation("middle")
+          .frame({ maxWidth: 100 }).paddingHorizontal(5).paddingVertical(2)
+          .background("#A578B826").cornerRadius(4)),
+    ] : []),
     Spacer(),
-    // Hover-revealed `+`, styled like the row close button. Virtual headers
-    // have no group to create into, so theirs stays hidden and inert.
-    Image("plus")
-      .font(sidebarFont(10)).weight("semibold").color("secondary")
-      .padding(3)
-      .cornerRadius(8)
-      .hoverBackground("#7f7f7f4a")
-      .showOnHover()
-      .opacity(groupId ? 1 : 0)
-      .help("New Workspace in Group")
-      .onTap(() => bulkClose() || newWorkspaceIn(groupId)),
+    ...(SETTINGS.projectGroups ? [Menu('+', conversationCreateMenu(groupId))
+      .font(12).color('secondary').frame({ width: 20, height: 20 })
+      .showOnHover().opacity(groupId ? 1 : 0).help('新建对话')] : [
+      Image('plus').font(10).weight('semibold').color('secondary').padding(3)
+        .cornerRadius(8).hoverBackground('#7f7f7f4a').showOnHover().opacity(groupId ? 1 : 0)
+        .help('New Workspace in Group').onTap(() => bulkClose() || newWorkspaceIn(groupId)),
+    ]),
   ]);
-  const content = SETTINGS.projectGroups ? VStack({ alignment: "leading", spacing: 2 }, [
-    titleLine,
-    ForEach({ items: memoJSON(() => projectBranch(nodeKey) ? ["branch"] : []), key: (k) => k }, () =>
-      Text(memo(() => projectBranch(nodeKey))).font(sidebarFont(10)).color("secondary")
-        .help(memo(() => projectBranch(nodeKey))).lineLimit(2).truncation("middle")
-        .frame({ maxWidth: "infinity", alignment: "leading" }).paddingLeading(32)),
-  ]) : titleLine;
-  return content
+  return titleLine
     .paddingLeading(8)
     .paddingTrailing(10)
-    .paddingVertical(5)
+    .paddingVertical(7)
     .marginLeading(memo(() => e().depth * INDENT))
-    .cornerRadius(8)
+    .cornerRadius(5)
     .background(memo(() => (dropHere() ? DROP_HEADER_TINT : selected() ? "#7f7f7f3d" : null)))
     .hoverBackground(memo(() => (selected() ? "#7f7f7f3d" : "#7f7f7f1c")))
     .frame({ maxWidth: "infinity" })
@@ -2000,7 +2047,7 @@ function groupHeader(entry, e) {
 function groupMenu(entry, e, g, withNode, toggle) {
   const { groupId, nodeKey } = entry;
   if (SETTINGS.projectGroups && SETTINGS.autoProjectGroups) return [
-    Button("新建对话", () => newWorkspaceIn(groupId)),
+    Menu("新建对话", conversationCreateMenu(groupId)),
     Button(memo(() => e().collapsed ? "展开项目" : "收起项目"), toggle),
     ...guideMenuItems(),
   ];
@@ -2026,6 +2073,7 @@ function groupMenu(entry, e, g, withNode, toggle) {
   // A virtual header has no cmux group to pin, ungroup, or delete.
   if (!groupId) return [...items, ...guideMenuItems()];
   return [
+    ...(SETTINGS.projectGroups ? [Menu("新建对话", conversationCreateMenu(groupId))] : []),
     Button("New Workspace in Group", () => newWorkspaceIn(groupId)),
     ...items,
     Divider(),
@@ -2041,6 +2089,37 @@ function groupMenu(entry, e, g, withNode, toggle) {
 // by cmux (anchor cwd, configured placement). cmux creates it unselected and
 // the command returns nothing, so the sidebar opens it once it shows up in
 // the data. Opening it also keeps it visible under the Active filter.
+// 显式预设创建独占一个请求；无任务正文、定时器或自动重发。
+const conversationLauncher = createConversationLauncher((method, params) => cmux(method, params));
+const [launchRevision, setLaunchRevision] = signal(0);
+const [recentStartupPresets, setRecentStartupPresets] = signal([]);
+const orderedStartupPresets = memoJSON(() => {
+  const recent = recentStartupPresets();
+  return [...STARTUP_PRESETS].sort((a, b) => {
+    const rank = (id) => recent.includes(id) ? recent.indexOf(id) : recent.length;
+    return rank(a.id) - rank(b.id);
+  });
+});
+const launchReport = memoJSON(() => {
+  launchRevision();
+  return conversationLauncher.tick(wsList(), groupsList().map((g) => g.id), data.clock()?.epoch ?? 0);
+});
+function startConversationPreset(groupId, preset) {
+  if (bulkClose()) return;
+  if (conversationLauncher.start(groupId, preset, wsList(), data.clock()?.epoch ?? 0)) {
+    setRecentStartupPresets([preset.id, ...recentStartupPresets().filter((id) => id !== preset.id)]);
+  }
+  setLaunchRevision(launchRevision() + 1);
+}
+function conversationCreateMenu(groupId) {
+  return [
+    Button('新建空白终端', () => bulkClose() || newWorkspaceIn(groupId)),
+    Divider(),
+    ForEach({ items: orderedStartupPresets, key: (preset) => preset.id }, (preset) =>
+      Button(memo(() => preset().label), () => startConversationPreset(groupId, preset()))),
+  ];
+}
+
 let pendingNew = null; // { groupId (null: top level), known: Set of workspace ids at the click }
 
 function newWorkspaceIn(groupId) {
@@ -2165,6 +2244,10 @@ sidebar(() =>
           .font(11).color("orange").lineLimit(2),
         Button("重试归组", retryProjectGrouping).font(11),
       ]).padding(8)),
+    ForEach({ items: memo(() => launchReport().state !== 'idle' ? [launchReport().state] : []), key: (s) => s }, () =>
+      Text(memo(() => launchReport().failure ? '新建对话未完成（' + launchReport().failure + '）'
+        : '正在创建对话…'))
+        .font(11).color('secondary').lineLimit(2).padding(8)),
     // The empty-filter message.
     VStack({ spacing: 2 }, [
       ForEach(

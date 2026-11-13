@@ -1,118 +1,72 @@
 #!/bin/sh
-# Installs the aia-projects custom sidebar into cmux.
-#
-#   curl -fsSL https://github.com/djejjd/AIAgentCLI/releases/latest/download/install.sh | sh
-#
-# Options (after `sh -s --` when piped):
-#   --version <tag>   install a specific release, e.g. v0.1.0-beta (default: latest)
-#   --dev             install a generated sidebar from this clone
-#   --uninstall       remove the installed sidebar file
-#
-# Run it from a cmux terminal: cmux only accepts CLI commands from processes it started.
+# 安装公开侧栏，并在本机注入厂商元数据；正式附件不包含个人会话信息。
+# --version <tag> 指定正式版本；--dev 从当前克隆生成；--uninstall 移除安装入口。
 set -eu
-
 repo="djejjd/AIAgentCLI"
 name="aia-projects"
-dir="$HOME/.config/cmux/sidebars"
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/cmux/sidebars"
 dest="$dir/$name.js"
 version="latest"
 mode="download"
-
-while [ $# -gt 0 ]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
-    --version) [ $# -ge 2 ] || { echo "--version needs a tag" >&2; exit 2; }; version="$2"; shift 2 ;;
+    --version) [ "$#" -ge 2 ] || { echo "--version 缺少版本号" >&2; exit 2; }; version="$2"; shift 2 ;;
     --dev) mode="dev"; shift ;;
     --uninstall) mode="uninstall"; shift ;;
-    -h|--help) sed -n '2,12p' "$0" 2>/dev/null || true; exit 0 ;;
-    *) echo "unknown option: $1" >&2; exit 2 ;;
+    -h|--help) sed -n '2,3p' "$0"; exit 0 ;;
+    *) echo "未知参数" >&2; exit 2 ;;
   esac
 done
-
-cmux_bin=""
-if command -v cmux >/dev/null 2>&1; then
-  cmux_bin="cmux"
-elif [ -x /Applications/cmux.app/Contents/Resources/bin/cmux ]; then
-  cmux_bin="/Applications/cmux.app/Contents/Resources/bin/cmux"
-fi
-
 if [ "$mode" = "uninstall" ]; then
-  if [ -e "$dest" ] || [ -L "$dest" ]; then
-    rm -f "$dest"
-    echo "Removed $dest"
-    echo "Right-click the sidebar button in cmux and pick another sidebar."
-  else
-    echo "Nothing to remove: $dest does not exist."
-  fi
+  rm -f "$dest"
+  echo "已移除侧栏入口，请在 cmux 中选择其他侧栏。"
   exit 0
 fi
-
-mkdir -p "$dir"
-backup=""
-
-# A file this installer wrote starts with the sidebar's own header line and is
-# simply replaced on update; anything else with the same name is set aside.
-set_aside_foreign() {
-  if [ -L "$dest" ]; then
-    rm -f "$dest"
-  elif [ -e "$dest" ] && ! head -n 1 "$dest" | grep -q '^// aia-projects:'; then
-    backup="$dest.bak.$(date +%Y%m%d%H%M%S)"
-    mv "$dest" "$backup"
-    echo "Moved your existing $dest to $backup"
-  fi
-}
-
+command -v node >/dev/null 2>&1 || { echo "需要 Node.js 20+ 来生成本机厂商映射；未修改安装。" >&2; exit 1; }
+command -v cmux >/dev/null 2>&1 || { echo "请从安装了 cmux CLI 的终端运行；未修改安装。" >&2; exit 1; }
+cmux ping >/dev/null 2>&1 || { echo "请从 cmux 终端运行安装器；未修改安装。" >&2; exit 1; }
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/aia-install.XXXXXX")"
+trap 'rm -rf "$tmpdir"' EXIT
 if [ "$mode" = "dev" ]; then
   root="$(cd "$(dirname "$0")" && pwd)"
   src="$root/src/$name.js"
-  [ -f "$src" ] || { echo "--dev must run from a clone: $src not found" >&2; exit 1; }
-  command -v node >/dev/null 2>&1 || { echo "Node.js is required for --dev" >&2; exit 1; }
-  set_aside_foreign
-  if ! node "$root/scripts/model-map.js" --source "$src" --output "$dest"; then
-    if [ -n "$backup" ] && [ -f "$backup" ] && [ ! -e "$dest" ]; then
-      mv "$backup" "$dest"
-      echo "Restored $dest." >&2
-    fi
-    exit 1
-  fi
-  echo "Generated $dest from $src"
+  generator="$root/scripts/model-map.js"
 else
   if [ "$version" = "latest" ]; then
-    url="https://github.com/$repo/releases/latest/download/$name.js"
+    base="https://github.com/$repo/releases/latest/download"
   else
-    url="https://github.com/$repo/releases/download/$version/$name.js"
+    base="https://github.com/$repo/releases/download/$version"
   fi
-  tmp="$(mktemp "${TMPDIR:-/tmp}/$name.XXXXXX")"
-  prev="$tmp.prev"
-  trap 'rm -f "$tmp" "$prev"' EXIT
-  echo "Downloading $url"
-  curl -fsSL "$url" -o "$tmp" || { echo "Download failed. Check the version tag and your connection." >&2; exit 1; }
-  head -n 1 "$tmp" | grep -q '^// aia-projects:' || { echo "The downloaded file is not aia-projects; nothing was changed." >&2; exit 1; }
-  if [ -f "$dest" ] && [ ! -L "$dest" ]; then cp "$dest" "$prev"; fi
-  set_aside_foreign
-  cp "$tmp" "$dest"
-  chmod 644 "$dest" # mktemp creates 0600
-  echo "Installed $dest ($version)"
+  echo "正在下载侧栏和本地生成器附件…"
+  for asset in aia-projects.js model-map.js local-metadata.mjs install-runtime.mjs SHA256SUMS; do
+    curl --connect-timeout 10 --max-time 60 -fsSL "$base/$asset" -o "$tmpdir/$asset" || {
+      echo "附件下载失败，未修改安装。" >&2; exit 1;
+    }
+  done
+  node - "$tmpdir" <<'VERIFY'
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+try {
+  const dir = process.argv[2], manifest = new Map();
+  for (const line of fs.readFileSync(path.join(dir, 'SHA256SUMS'), 'utf8').trim().split(/\r?\n/)) {
+    const match = line.match(/^([a-fA-F0-9]{64})\s+\*?([A-Za-z0-9._-]+)$/);
+    if (!match || manifest.has(match[2])) throw Error('invalid_manifest');
+    manifest.set(match[2], match[1].toLowerCase());
+  }
+  for (const name of ['aia-projects.js', 'model-map.js', 'local-metadata.mjs', 'install-runtime.mjs']) {
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex');
+    if (manifest.get(name) !== actual) throw Error('checksum_mismatch');
+  }
+} catch { console.error('附件校验和不符或清单无效，未执行生成器、未修改安装。'); process.exit(1); }
+VERIFY
+  printf '{"type":"module"}\n' > "$tmpdir/package.json"
+  src="$tmpdir/$name.js"
+  generator="$tmpdir/model-map.js"
 fi
-
-# cmux answers CLI commands only from processes it started (its default socket
-# mode), so outside a cmux terminal the file is installed but not activated.
-if [ -z "$cmux_bin" ] || ! "$cmux_bin" ping >/dev/null 2>&1; then
-  echo "Could not reach cmux from this terminal. Open cmux, right-click the sidebar button,"
-  echo "and pick \"$name\" (or re-run this command from a cmux terminal)."
-  exit 0
-fi
-
-if ! "$cmux_bin" sidebar validate "$name"; then
-  # Put back what was there before, so a bad file never replaces a working sidebar.
-  if [ -n "${prev:-}" ] && [ -f "$prev" ]; then
-    mv "$prev" "$dest"
-    echo "Restored the previous version." >&2
-  elif [ -n "$backup" ]; then
-    mv "$backup" "$dest"
-    echo "Restored $dest." >&2
-  fi
+[ -f "$src" ] && [ -f "$generator" ] || { echo "缺少侧栏或生成器，未修改安装。" >&2; exit 1; }
+head -n 1 "$src" | grep -q '^// aia-projects:' || { echo "附件不是 AIAgentCLI 侧栏，未修改安装。" >&2; exit 1; }
+mkdir -p "$dir"
+if ! node "$generator" --source "$src" --output "$dest" --activate; then
+  echo "安装未通过；生成器已保留并发更新或恢复旧版。" >&2
   exit 1
 fi
-
-"$cmux_bin" sidebar select "$name" >/dev/null
-echo "Selected \"$name\" as the left sidebar. Done."
+echo "已安装并热加载 aia-projects。"

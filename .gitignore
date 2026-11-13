@@ -1,1 +1,5 @@
 .DS_Store
+
+# 本机排障材料不提交。
+docs/quality/
+release-assets/

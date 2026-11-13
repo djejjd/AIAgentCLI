@@ -2,11 +2,14 @@
 
 // 从 cmux 会话元数据生成 Agent 会话到模型的本地映射。
 // 只读取会话恢复命令中的模型参数，不读取提示词或 transcript 正文。
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { installSidebar } from './install-runtime.mjs';
+import { generateLocalMetadata, injectLocalMetadata } from './local-metadata.mjs';
 
 const GENERATED_MAP_SENTINEL = "const GENERATED_MODEL_MAP = {};";
 
@@ -92,7 +95,7 @@ function argument(name, fallback) {
   return at >= 0 && process.argv[at + 1] ? process.argv[at + 1] : fallback;
 }
 
-function main() {
+async function main() {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const sourcePath = argument(
     "--source",
@@ -102,41 +105,29 @@ function main() {
     "--output",
     path.join(os.homedir(), ".config/cmux/sidebars/aia-projects.js"),
   );
-  const sessions = JSON.parse(execFileSync(
-    "cmux",
-    ["vault", "sessions", "--limit", "500", "--json"],
-    { encoding: "utf8", env: { ...process.env, CMUX_QUIET: "1" } },
-  ));
-  const modelMap = buildModelMap(sessions.sessions);
-  const source = fs.readFileSync(sourcePath, "utf8");
-  const generated = injectModelMap(source, modelMap);
-  const temporary = `${outputPath}.tmp-${process.pid}`;
-  let previous = null;
-  try {
-    const stat = fs.lstatSync(outputPath);
-    previous = stat.isSymbolicLink()
-      ? { kind: "symlink", target: fs.readlinkSync(outputPath) }
-      : { kind: "file", content: fs.readFileSync(outputPath), mode: stat.mode };
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  fs.writeFileSync(temporary, generated, { mode: 0o644 });
-  fs.renameSync(temporary, outputPath);
-
-  const name = path.basename(outputPath, ".js");
-  const validation = spawnSync("cmux", ["sidebar", "validate", name], { encoding: "utf8" });
-  if (validation.status !== 0) {
-    fs.rmSync(outputPath, { force: true });
-    if (previous?.kind === "symlink") {
-      fs.symlinkSync(previous.target, outputPath);
-    } else if (previous?.kind === "file") {
-      fs.writeFileSync(outputPath, previous.content, { mode: previous.mode });
+  let count = 0;
+  await installSidebar({ outputPath, activate: process.argv.includes('--activate'), generate: async (installed) => {
+    const sessions = JSON.parse(execFileSync('cmux', ['--json', 'vault', 'sessions', '--limit', '100'], {
+      encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    }));
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    if (source.includes('const LOCAL_CONVERSATION_METADATA =')) {
+      const workspaces = JSON.parse(execFileSync('cmux', ['--json', 'workspace', 'list'],
+        { encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }));
+      const { metadata } = await generateLocalMetadata(installed, workspaces.workspaces || [], sessions.sessions || []);
+      count = Object.keys(metadata.providers).length;
+      return injectLocalMetadata(source, metadata);
     }
-    throw new Error(validation.stdout || validation.stderr || "sidebar validation failed");
-  }
-  process.stdout.write(`Generated ${outputPath} with ${Object.keys(modelMap).length} model mappings\n`);
+    const modelMap = buildModelMap(sessions.sessions);
+    count = Object.keys(modelMap).length;
+    return injectModelMap(source, modelMap);
+  } });
+  process.stdout.write(`Generated sidebar with ${count} provider mappings\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((error) => {
+    console.error('侧栏生成失败（' + (error.stage || 'metadata_or_install') + '），已保留并发更新或恢复上一版；未输出原始错误。');
+    process.exitCode = 1;
+  });
 }

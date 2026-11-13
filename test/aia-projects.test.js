@@ -158,7 +158,7 @@ describe("conversation status", () => {
       ["ended", "Ready", "#30D158", "roundedRectangle"],
     ]) {
       const sb = mountAiaProjects(statusState(status), { autoProjectGroups: false });
-      const row = sb.row("Codex");
+      const row = sb.row("未知厂商 · W1");
       assert.ok(row.texts.includes(label));
       assert.equal(row.textColor(label), color);
       assert.deepEqual(row.marker(), { type, color });
@@ -171,7 +171,7 @@ describe("conversation status", () => {
     const sb = mountAiaProjects(state, { autoProjectGroups: false });
     state.now = 100 + 2 * 60 * 60;
     sb.setData(state);
-    const row = sb.row("Codex");
+    const row = sb.row("未知厂商 · W1");
     assert.ok(row.texts.includes("Ready"));
     assert.equal(row.textColor("Ready"), "#30D158");
     assert.deepEqual(row.marker(), { type: "roundedRectangle", color: "#30D158" });
@@ -195,7 +195,7 @@ describe("conversation status", () => {
       agent("working", { kind: "codex", name: "Codex", lastActivityAt: 80 }),
     );
     const sb = mountAiaProjects(state, { autoProjectGroups: false });
-    assert.ok(sb.row("Codex").texts.includes("Ready"));
+    assert.ok(sb.row("未知厂商 · W1").texts.includes("Ready"));
   });
 });
 
@@ -218,12 +218,12 @@ describe("sidebar readability", () => {
         "agent-1": { model: "deepseek-flash", provider: "deepseek", name: "DeepSeek Flash" },
       },
     });
-    const row = sb.row("DeepSeek Flash");
+    const row = sb.row("DeepSeek · W1");
 
     assert.equal(sb.row("Project").fontSize("Project"), 14);
-    assert.equal(row.fontSize("DeepSeek Flash"), 13);
-    assert.equal(row.fontSize("Running"), 11.5);
-    assert.equal(row.fontSize("project task"), 11.5);
+    assert.equal(row.fontSize("DeepSeek · W1"), 13);
+    assert.equal(row.fontSize("Running"), 10);
+    assert.ok(!row.texts.includes("project task"));
     assert.equal(sb.chip("Active").fontSize(), 13);
   });
 });
@@ -247,22 +247,18 @@ describe("model identity", () => {
     "openai-1": { model: "gpt-6.1-sol", provider: "openai", name: "GPT-6.1 Sol" },
   };
 
-  test("shows every agent model in the same workspace", () => {
+  test("shows focused provider and additional-agent count without model names", () => {
     const sb = mountAiaProjects(state(), { autoProjectGroups: false, modelMap });
-    const row = sb.row("DeepSeek Flash");
-
-    assert.ok(row.texts.includes("DeepSeek Flash"));
-    assert.ok(row.texts.includes("GPT-6.1 Sol"));
-    assert.ok(row.texts.includes("未知模型"));
-    assert.equal(row.texts.some((text) => text.includes("+2")), false);
+    const row = sb.rows().find((r) => r.key === "w1");
+    assert.deepEqual(row.texts, ["DeepSeek · W1 +2", "Running"]);
+    assert.ok(!row.text.includes("Flash"));
+    assert.ok(!row.text.includes("GPT-6.1"));
   });
 
-  test("uses monochrome provider icons and one unknown fallback", () => {
+  test("uses one monochrome provider icon and a standard unknown fallback", () => {
     const sb = mountAiaProjects(state(), { autoProjectGroups: false, modelMap });
-    const images = sb.row("DeepSeek Flash").images();
-
-    assert.ok(images.some((image) => image.name === "water.waves" && image.color === "secondary"));
-    assert.ok(images.some((image) => image.name === "sparkles" && image.color === "secondary"));
-    assert.ok(images.some((image) => image.name === "circle-help" && image.color === "secondary"));
+    assert.ok(sb.rows().find((r) => r.key === "w1").images().some((image) => image.name === "water.waves" && image.color === "secondary"));
+    const unknown = mountAiaProjects(state(), { autoProjectGroups: false });
+    assert.ok(unknown.rows().find((r) => r.key === "w1").images().some((image) => image.name === "questionmark.circle"));
   });
 });
